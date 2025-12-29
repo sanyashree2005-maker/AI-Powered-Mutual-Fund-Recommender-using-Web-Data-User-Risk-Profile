@@ -16,9 +16,7 @@ st.set_page_config(
 )
 
 st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
-st.caption(
-    "Recommendations are deterministic. The agent only explains and answers follow-ups."
-)
+
 
 # ------------------------------------------
 # Load Dataset
