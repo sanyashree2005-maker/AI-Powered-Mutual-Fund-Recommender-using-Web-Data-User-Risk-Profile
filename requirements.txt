@@ -7,4 +7,3 @@ chromadb
 sentence-transformers
 pandas
 numpy
-
