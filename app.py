@@ -1,11 +1,9 @@
 # =====================================================
 # Agentic AI – Mutual Fund Recommendation System
-# (Streamlit-safe, Recommender-grade)
+# (Streamlit-safe, Recommendation-grade)
 # =====================================================
 
 import streamlit as st
-import requests
-from bs4 import BeautifulSoup
 from typing import Dict, List
 
 from langchain_groq import ChatGroq
@@ -18,7 +16,7 @@ from langchain_community.vectorstores import Chroma
 # PAGE CONFIG
 # -----------------------------------------------------
 st.set_page_config(
-    page_title="Agentic AI – Mutual Fund Recommender",
+    page_title="Agentic AI – Mutual Fund Recommendation System",
     layout="wide"
 )
 st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
@@ -29,7 +27,7 @@ st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
 llm = ChatGroq(
     api_key=st.secrets["GROQ_API_KEY"],
     model="llama-3.1-8b-instant",
-    temperature=0.1,   # 🔑 low temperature = less generic output
+    temperature=0.1,
     streaming=False
 )
 
@@ -62,40 +60,24 @@ def user_profile_agent() -> Dict:
     }
 
 # -----------------------------------------------------
-# AGENT 3: WEB DATA SCRAPING
+# AGENT 3: STATIC MUTUAL FUND DATA (OPTION 1 FIX)
 # -----------------------------------------------------
-def scrape_mutual_funds() -> List[Document]:
-    url = "https://www.moneycontrol.com/mutual-funds/performance-tracker/returns/equity.html"
-    response = requests.get(url, timeout=10)
-    soup = BeautifulSoup(response.text, "html.parser")
+def load_mutual_fund_data() -> List[Document]:
+    funds = [
+        "Fund Name: SBI Magnum Low Duration Fund, Category: Debt, 1Y Return: 7%, 3Y Return: 6.8%, Risk Level: Low",
+        "Fund Name: HDFC Balanced Advantage Fund, Category: Hybrid, 1Y Return: 12%, 3Y Return: 14%, Risk Level: Moderate",
+        "Fund Name: ICICI Prudential Bluechip Fund, Category: Equity, 1Y Return: 15%, 3Y Return: 16%, Risk Level: Moderate",
+        "Fund Name: Axis Long Term Equity Fund, Category: ELSS, 1Y Return: 18%, 3Y Return: 20%, Risk Level: High",
+        "Fund Name: Kotak Equity Opportunities Fund, Category: Equity, 1Y Return: 16%, 3Y Return: 17%, Risk Level: Moderate"
+    ]
 
-    docs = []
-    rows = soup.select("table tbody tr")[:15]
-
-    for row in rows:
-        cols = [c.get_text(strip=True) for c in row.find_all("td")]
-        if len(cols) >= 5:
-            docs.append(
-                Document(
-                    page_content=(
-                        f"Fund Name: {cols[0]}, "
-                        f"Category: {cols[1]}, "
-                        f"1Y Return: {cols[2]}, "
-                        f"3Y Return: {cols[3]}, "
-                        f"Risk Level: {cols[4]}"
-                    )
-                )
-            )
-    return docs
+    return [Document(page_content=fund) for fund in funds]
 
 # -----------------------------------------------------
 # AGENT 4: RETRIEVAL (RAG)
 # -----------------------------------------------------
 def retrieval_agent(query: str) -> List[Document]:
-    docs = scrape_mutual_funds()
-    if not docs:
-        return []
-
+    docs = load_mutual_fund_data()
     vectordb = Chroma.from_documents(docs, embeddings)
     retriever = vectordb.as_retriever(search_kwargs={"k": 5})
     return retriever.invoke(query)
@@ -104,9 +86,6 @@ def retrieval_agent(query: str) -> List[Document]:
 # AGENT 5: RECOMMENDATION (STRICT & RANKED)
 # -----------------------------------------------------
 def recommendation_agent(profile: Dict, docs: List[Document]) -> str:
-    if not docs:
-        return "Mutual fund data is not available from current public sources."
-
     context = "\n".join(d.page_content for d in docs)
 
     prompt = ChatPromptTemplate.from_messages([
@@ -115,10 +94,10 @@ def recommendation_agent(profile: Dict, docs: List[Document]) -> str:
             "You are a mutual fund recommendation engine.\n"
             "Rules:\n"
             "1. Select ONLY fund names present in the data\n"
-            "2. Rank the funds from best to worst\n"
-            "3. Give 1–2 concrete reasons per fund\n"
-            "4. NO generic financial advice\n"
-            "5. If data is insufficient, clearly say so"
+            "2. Rank funds from best to worst\n"
+            "3. Match the user's risk profile and preferences\n"
+            "4. Give 1 short reason per fund\n"
+            "5. NO generic advice"
         ),
         (
             "human",
@@ -131,7 +110,7 @@ Preferences: {profile['preferences']}
 Available Mutual Fund Data:
 {context}
 
-Return the answer strictly in this format:
+Return output strictly in this format:
 1. Fund Name – Reason
 2. Fund Name – Reason
 """
@@ -141,25 +120,12 @@ Return the answer strictly in this format:
     return llm.invoke(prompt.format_messages()).content
 
 # -----------------------------------------------------
-# AGENT 6: EXPLANATION
-# -----------------------------------------------------
-def explanation_agent(text: str) -> str:
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "Explain the recommendation clearly using the given context."),
-        ("human", text)
-    ])
-    return llm.invoke(prompt.format_messages()).content
-
-# -----------------------------------------------------
-# AGENT 7: COMPARISON
+# AGENT 6: COMPARISON
 # -----------------------------------------------------
 def comparison_agent(docs: List[Document]) -> str:
-    if not docs:
-        return "Not enough mutual fund data to perform comparison."
-
     context = "\n".join(d.page_content for d in docs)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Compare the mutual funds strictly using the given data."),
+        ("system", "Compare the mutual funds using only the given data."),
         ("human", context)
     ])
     return llm.invoke(prompt.format_messages()).content
@@ -178,14 +144,10 @@ def orchestrator(query: str) -> str:
     if intent == "comparison":
         return comparison_agent(docs)
 
-    if intent == "explanation":
-        return explanation_agent(query)
-
     if intent == "exit":
         return "Thank you for using the Mutual Fund Recommendation System."
 
-    recommendation = recommendation_agent(profile, docs)
-    return recommendation
+    return recommendation_agent(profile, docs)
 
 # -----------------------------------------------------
 # STREAMLIT UI
