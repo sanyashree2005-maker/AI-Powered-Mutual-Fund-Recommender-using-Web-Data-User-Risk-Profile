@@ -4,7 +4,7 @@ import os
 from langchain_groq import ChatGroq
 
 # -------------------------------------------------
-# CONFIG
+# PAGE CONFIG
 # -------------------------------------------------
 st.set_page_config(
     page_title="Agentic AI – Mutual Fund Recommendation System",
@@ -14,10 +14,10 @@ st.set_page_config(
 st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
 
 # -------------------------------------------------
-# DATA SOURCE (GITHUB RAW URL)
+# DATASET (GITHUB RAW URL)
 # -------------------------------------------------
 DATA_URL = "Mutual Funds Data.csv"
-# ⬆️ REPLACE with your actual GitHub raw CSV URL
+# 🔴 Replace with your actual GitHub RAW CSV URL
 
 @st.cache_data
 def load_data():
@@ -26,7 +26,7 @@ def load_data():
 df = load_data()
 
 # -------------------------------------------------
-# SIDEBAR – HARD CONSTRAINTS
+# SIDEBAR – INVESTOR PROFILE (HARD CONSTRAINTS)
 # -------------------------------------------------
 st.sidebar.header("Investor Profile")
 
@@ -47,7 +47,7 @@ preference = st.sidebar.multiselect(
 preference = preference[0] if preference else None
 
 # -------------------------------------------------
-# PREFERENCE FILTERING (CORE FIX)
+# PREFERENCE FILTERING (CORE RECOMMENDATION LOGIC)
 # -------------------------------------------------
 def apply_preference_filter(df, preference):
     if preference == "Stability":
@@ -73,7 +73,7 @@ def apply_preference_filter(df, preference):
 user_query = st.chat_input("Ask anything about mutual funds...")
 
 # -------------------------------------------------
-# LLM (EXPLANATION ONLY)
+# LLM (EXPLANATION ONLY – OPTIONAL LAYER)
 # -------------------------------------------------
 llm = ChatGroq(
     api_key=os.environ.get("GROQ_API_KEY"),
@@ -120,33 +120,43 @@ if user_query and preference:
         )
 
     # -------------------------
-    # LLM EXPLANATION (GROUNDED)
+    # SAFE LLM EXPLANATION
     # -------------------------
-    context = top_funds.to_string(index=False)
+    context = top_funds[[
+        "scheme_name",
+        "category",
+        "risk_level",
+        "returns_3yr",
+        "expense_ratio"
+    ]].to_string(index=False)
 
     explanation_prompt = f"""
-You are a financial analysis assistant.
+Using ONLY the data below, explain briefly why these funds match the user's profile.
 
-Using ONLY the mutual fund data below, explain why these funds are suitable
-for the following investor profile:
-
-Risk Profile: {risk_profile}
-Investment Horizon: {investment_horizon}
-Preference: {preference}
+User Profile:
+- Risk: {risk_profile}
+- Horizon: {investment_horizon}
+- Preference: {preference}
 
 Rules:
-- Do NOT add new fund names
-- Do NOT predict future returns
-- Do NOT give investment advice
+- No new fund names
+- No predictions
+- No advice
 
-DATA:
+Data:
 {context}
 """
 
-    explanation = llm.invoke(explanation_prompt)
-
-    st.subheader("🧠 Explanation")
-    st.write(explanation.content)
+    try:
+        explanation = llm.invoke(explanation_prompt)
+        st.subheader("🧠 Explanation")
+        st.write(explanation.content)
+    except Exception:
+        st.subheader("🧠 Explanation")
+        st.info(
+            "Explanation is temporarily unavailable due to LLM limits. "
+            "The recommendations above are generated directly from the dataset."
+        )
 
 elif user_query and not preference:
     st.warning("Please select one preference: Stability, Growth, or Tax Saving.")
