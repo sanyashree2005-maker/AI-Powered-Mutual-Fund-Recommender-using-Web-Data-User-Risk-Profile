@@ -1,6 +1,6 @@
 # ============================================================
 # AGENTIC AI – NEAR-LIVE MUTUAL FUND INTELLIGENCE SYSTEM
-# LangGraph + Public API Style Data + RAG + Follow-Up Explanations
+# LangGraph + API-style Market Data + RAG + Follow-Up Explanations
 # ============================================================
 
 import streamlit as st
@@ -15,20 +15,13 @@ from langchain_community.vectorstores import Chroma
 # ============================================================
 # LLM CONFIG (API key loaded from Streamlit Secrets)
 # ============================================================
-llm = ChatOpenAI(
-    model="gpt-3.5-turbo",
-    temperature=0
-)
+llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
 # ============================================================
 # 1️⃣ MARKET DATA AGENT (PUBLIC API – NEAR-LIVE)
 # ============================================================
 @st.cache_data(ttl=1800)  # refresh every 30 minutes
 def fetch_market_data():
-    """
-    Simulated public-API-style mutual fund data.
-    Replace with real free API endpoints if needed.
-    """
     return pd.DataFrame([
         {
             "Fund Name": "Axis Bluechip Fund",
@@ -63,7 +56,7 @@ df = fetch_market_data()
 last_updated = datetime.now().strftime("%d %b %Y, %I:%M %p")
 
 # ============================================================
-# 2️⃣ VECTOR STORE (RAG CORE – EPHEMERAL)
+# 2️⃣ VECTOR STORE (RAG CORE)
 # ============================================================
 @st.cache_resource
 def build_vector_store(df):
@@ -82,16 +75,31 @@ class AgentState(dict):
     pass
 
 # ============================================================
-# 3️⃣ INTENT CLASSIFICATION AGENT
+# 3️⃣ INTENT CLASSIFICATION AGENT (SAFE NORMALIZATION)
 # ============================================================
 def intent_agent(state):
     prompt = f"""
-    Classify intent into:
+    Classify intent into EXACTLY one of:
     recommendation, explanation, followup, market_overview, exit
+
+    If unsure, choose recommendation.
 
     Query: {state['query']}
     """
-    state["intent"] = llm.invoke(prompt).content.lower()
+    intent = llm.invoke(prompt).content.lower().strip()
+
+    allowed = [
+        "recommendation",
+        "explanation",
+        "followup",
+        "market_overview",
+        "exit"
+    ]
+
+    if intent not in allowed:
+        intent = "recommendation"
+
+    state["intent"] = intent
     return state
 
 # ============================================================
@@ -135,7 +143,7 @@ def recommendation_agent(state):
 def explanation_agent(state):
     prompt = f"""
     Explain the recommendation using:
-    risk-return tradeoff, investment horizon, and expense ratio.
+    risk-return tradeoff, horizon, and expense ratio.
 
     Recommendation:
     {state.get('last_recommendation')}
@@ -163,8 +171,6 @@ def followup_explanation_agent(state):
 
     User follow-up question:
     {state['query']}
-
-    Respond clearly and consistently.
     """
     state["response"] = llm.invoke(prompt).content
     return state
@@ -207,8 +213,7 @@ graph.add_conditional_edges(
         "followup": "FollowUpExplain",
         "market_overview": "Retrieve",
         "exit": END
-    },
-    default="Profile"
+    }
 )
 
 graph.add_edge("Profile", "Retrieve")
@@ -221,7 +226,7 @@ graph.add_edge("MarketOverview", END)
 app = graph.compile()
 
 # ============================================================
-# STREAMLIT UI (IMPORTANT: ONLY DISPLAY INVOKE OUTPUT)
+# STREAMLIT UI (IMPORTANT: ONLY DISPLAY invoke OUTPUT)
 # ============================================================
 st.set_page_config(
     page_title="Agentic AI – Mutual Fund Intelligence",
