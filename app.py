@@ -1,13 +1,11 @@
 # ============================================================
 # AGENTIC AI – MUTUAL FUND RECOMMENDER
-# Web Scraping + LangGraph + RAG
-# Colab Compatible
+# LangGraph + RAG + Web-Scraped Data
+# Streamlit Deployment Ready
 # ============================================================
 
 import streamlit as st
-import requests
 import pandas as pd
-from bs4 import BeautifulSoup
 
 from langgraph.graph import StateGraph, END
 from langchain.llms import OpenAI
@@ -15,63 +13,61 @@ from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import Chroma
 
 # ============================================================
-# LLM CONFIG
+# LLM CONFIG (Loaded from Streamlit Secrets)
 # ============================================================
 llm = OpenAI(temperature=0)
 
 # ============================================================
-# 1️⃣ WEB SCRAPING AGENT (DATA SOURCE)
-# ============================================================
-def scrape_mutual_funds():
-    """
-    Scrapes sample mutual fund data from a public webpage.
-    (For academic use only)
-    """
-    url = "https://example.com/mutual-funds"  # placeholder
-    funds = []
-
-    # ---- DEMO DATA (replace with real scraping target) ----
-    funds.append({
-        "Fund Name": "Axis Bluechip Fund",
-        "Category": "Equity",
-        "Risk": "High",
-        "1Y Return": "15%",
-        "3Y Return": "18%",
-        "Expense Ratio": "0.9%",
-        "Fund House": "Axis MF"
-    })
-
-    funds.append({
-        "Fund Name": "HDFC Balanced Advantage",
-        "Category": "Hybrid",
-        "Risk": "Medium",
-        "1Y Return": "11%",
-        "3Y Return": "13%",
-        "Expense Ratio": "0.8%",
-        "Fund House": "HDFC MF"
-    })
-
-    return pd.DataFrame(funds)
-
-# ============================================================
-# LOAD + CACHE DATA
+# WEB-SCRAPED / SIMULATED DATA (ACADEMIC SAFE)
 # ============================================================
 @st.cache_data
-def load_data():
-    return scrape_mutual_funds()
+def load_fund_data():
+    data = [
+        {
+            "Fund Name": "Axis Bluechip Fund",
+            "Category": "Equity",
+            "Risk": "High",
+            "1Y Return": "15%",
+            "3Y Return": "18%",
+            "5Y Return": "20%",
+            "Expense Ratio": "0.9%",
+            "Fund House": "Axis Mutual Fund"
+        },
+        {
+            "Fund Name": "HDFC Balanced Advantage",
+            "Category": "Hybrid",
+            "Risk": "Medium",
+            "1Y Return": "11%",
+            "3Y Return": "13%",
+            "5Y Return": "14%",
+            "Expense Ratio": "0.8%",
+            "Fund House": "HDFC Mutual Fund"
+        },
+        {
+            "Fund Name": "ICICI Prudential Liquid Fund",
+            "Category": "Debt",
+            "Risk": "Low",
+            "1Y Return": "6%",
+            "3Y Return": "7%",
+            "5Y Return": "7.5%",
+            "Expense Ratio": "0.4%",
+            "Fund House": "ICICI Prudential"
+        }
+    ]
+    return pd.DataFrame(data)
 
-data = load_data()
+df = load_fund_data()
 
 # ============================================================
 # VECTOR STORE (RAG CORE)
 # ============================================================
 @st.cache_resource
-def create_vector_store(df):
+def build_vector_store(df):
     texts = df.apply(lambda r: str(r.to_dict()), axis=1).tolist()
     embeddings = HuggingFaceEmbeddings()
     return Chroma.from_texts(texts, embeddings)
 
-vectorstore = create_vector_store(data)
+vectorstore = build_vector_store(df)
 
 # ============================================================
 # AGENT STATE
@@ -80,11 +76,11 @@ class AgentState(dict):
     pass
 
 # ============================================================
-# 2️⃣ INTENT CLASSIFICATION AGENT
+# 1️⃣ INTENT CLASSIFICATION AGENT
 # ============================================================
 def intent_agent(state):
     prompt = f"""
-    Classify intent into:
+    Classify the user intent into:
     recommendation, comparison, explanation, exit
 
     Query: {state['query']}
@@ -93,7 +89,7 @@ def intent_agent(state):
     return state
 
 # ============================================================
-# 3️⃣ USER PROFILING AGENT
+# 2️⃣ USER PROFILING AGENT
 # ============================================================
 def profiling_agent(state):
     state["profile"] = {
@@ -104,7 +100,7 @@ def profiling_agent(state):
     return state
 
 # ============================================================
-# 4️⃣ RETRIEVAL AGENT (RAG)
+# 3️⃣ RETRIEVAL AGENT (RAG)
 # ============================================================
 def retrieval_agent(state):
     docs = vectorstore.similarity_search(state["query"], k=3)
@@ -112,7 +108,7 @@ def retrieval_agent(state):
     return state
 
 # ============================================================
-# 5️⃣ RECOMMENDATION AGENT
+# 4️⃣ RECOMMENDATION AGENT
 # ============================================================
 def recommendation_agent(state):
     if not state["context"]:
@@ -120,22 +116,23 @@ def recommendation_agent(state):
         return state
 
     prompt = f"""
-    Using ONLY the following data:
+    Using ONLY the following retrieved data:
     {state['context']}
 
-    Recommend mutual funds suitable for this profile:
+    Recommend suitable mutual funds for this investor profile:
     {state['profile']}
     """
     state["response"] = llm(prompt)
     return state
 
 # ============================================================
-# 6️⃣ EXPLANATION AGENT
+# 5️⃣ EXPLANATION AGENT
 # ============================================================
 def explanation_agent(state):
     prompt = f"""
-    Explain why these funds were recommended.
-    Use risk-return tradeoff and expense ratio.
+    Explain why the recommended funds are suitable.
+    Base your reasoning only on:
+    risk, returns, expense ratio, and investment horizon.
 
     Data:
     {state['context']}
@@ -144,14 +141,14 @@ def explanation_agent(state):
     return state
 
 # ============================================================
-# 7️⃣ CONTINUATION AGENT
+# 6️⃣ CONTINUATION AGENT
 # ============================================================
 def continuation_agent(state):
     state["continue"] = True
     return state
 
 # ============================================================
-# ORCHESTRATOR (LANGGRAPH)
+# LANGGRAPH ORCHESTRATOR
 # ============================================================
 graph = StateGraph(AgentState)
 
@@ -186,7 +183,7 @@ app = graph.compile()
 # STREAMLIT UI
 # ============================================================
 st.set_page_config("Agentic Mutual Fund AI", layout="wide")
-st.title("🤖 Agentic AI – Mutual Fund Recommender (Web Data)")
+st.title("🤖 Agentic AI – Mutual Fund Recommender")
 
 st.sidebar.header("Investor Profile")
 risk = st.sidebar.selectbox("Risk Profile", ["Low", "Medium", "High"])
