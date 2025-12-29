@@ -1,6 +1,6 @@
 # ============================================================
 # AGENTIC AI – MUTUAL FUND RECOMMENDER
-# LangGraph + RAG + Streamlit (FINAL DEPLOYMENT VERSION)
+# FINAL STREAMLIT DEPLOYMENT VERSION
 # ============================================================
 
 import streamlit as st
@@ -12,7 +12,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
 # ============================================================
-# LLM CONFIG (API key loaded from Streamlit Secrets)
+# LLM CONFIG (API key loaded automatically from Streamlit Secrets)
 # ============================================================
 llm = ChatOpenAI(
     model="gpt-3.5-turbo",
@@ -20,11 +20,11 @@ llm = ChatOpenAI(
 )
 
 # ============================================================
-# MUTUAL FUND DATA (Web-scraped / Simulated – Academic Safe)
+# MUTUAL FUND DATA (Web-like / Academic Safe)
 # ============================================================
 @st.cache_data
 def load_fund_data():
-    data = [
+    return pd.DataFrame([
         {
             "Fund Name": "Axis Bluechip Fund",
             "Category": "Equity",
@@ -55,8 +55,7 @@ def load_fund_data():
             "Expense Ratio": "0.4%",
             "Fund House": "ICICI Prudential"
         }
-    ]
-    return pd.DataFrame(data)
+    ])
 
 df = load_fund_data()
 
@@ -84,7 +83,7 @@ class AgentState(dict):
 # ============================================================
 def intent_agent(state):
     prompt = f"""
-    Classify the user intent into:
+    Classify intent into:
     recommendation, explanation, exit
 
     Query: {state['query']}
@@ -152,4 +151,38 @@ graph.add_conditional_edges(
 )
 
 graph.add_edge("Profile", "Retrieve")
-graph
+graph.add_edge("Retrieve", "Recommend")
+graph.add_edge("Recommend", "Continue")
+graph.add_edge("Continue", END)
+
+app = graph.compile()
+
+# ============================================================
+# STREAMLIT UI (IMPORTANT: NO graph/app rendering)
+# ============================================================
+st.set_page_config(
+    page_title="Agentic AI – Mutual Fund Recommender",
+    layout="wide"
+)
+
+st.title("🤖 Agentic AI – Mutual Fund Recommender")
+
+st.sidebar.header("Investor Profile")
+risk = st.sidebar.selectbox("Risk Profile", ["Low", "Medium", "High"])
+horizon = st.sidebar.selectbox("Investment Horizon", ["Short", "Medium", "Long"])
+amount = st.sidebar.number_input("Investment Amount", min_value=1000)
+
+query = st.text_input("Ask your question")
+
+if st.button("Submit"):
+    state = {
+        "query": query,
+        "risk": risk,
+        "horizon": horizon,
+        "amount": amount
+    }
+
+    result = app.invoke(state)
+
+    st.subheader("Agent Response")
+    st.write(result.get("response", "No response generated"))
