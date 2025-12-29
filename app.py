@@ -41,9 +41,11 @@ embeddings = HuggingFaceEmbeddings(
 # -----------------------------------------------------
 def intent_agent(user_query: str) -> str:
     prompt = ChatPromptTemplate.from_messages([
-        ("system",
-         "Classify intent. Return ONE word only: "
-         "recommendation, explanation, comparison, market, exit"),
+        (
+            "system",
+            "Classify intent. Return ONLY one word: "
+            "recommendation, explanation, comparison, market, exit"
+        ),
         ("human", user_query)
     ])
     result = llm.invoke(prompt.format_messages())
@@ -60,7 +62,7 @@ def user_profile_agent() -> Dict:
     }
 
 # -----------------------------------------------------
-# AGENT 3: DATA SCRAPING (WEB DATA)
+# AGENT 3: WEB DATA SCRAPING
 # -----------------------------------------------------
 def scrape_mutual_funds() -> List[Document]:
     url = "https://www.moneycontrol.com/mutual-funds/performance-tracker/returns/equity.html"
@@ -100,26 +102,24 @@ def retrieval_agent(query: str) -> List[Document]:
 # -----------------------------------------------------
 def recommendation_agent(profile: Dict, docs: List[Document]) -> str:
     if not docs:
-        return "No suitable mutual fund data is available from current public sources."
+        return "Relevant mutual fund data is not available from public sources."
 
     context = "\n".join(d.page_content for d in docs)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", "Recommend mutual funds strictly using the given data."),
-        ("human",
-         f"User Profile: {profile}\n\nMutual Fund Data:\n{context}")
+        ("human", f"User Profile: {profile}\n\nData:\n{context}")
     ])
 
-    result = llm.invoke(prompt.format_messages())
-    return result.content
+    return llm.invoke(prompt.format_messages()).content
 
 # -----------------------------------------------------
 # AGENT 6: EXPLANATION
 # -----------------------------------------------------
-def explanation_agent(answer: str) -> str:
+def explanation_agent(text: str) -> str:
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Explain the recommendation clearly and safely."),
-        ("human", answer)
+        ("system", "Explain clearly and safely."),
+        ("human", text)
     ])
     return llm.invoke(prompt.format_messages()).content
 
@@ -132,7 +132,7 @@ def comparison_agent(docs: List[Document]) -> str:
 
     context = "\n".join(d.page_content for d in docs)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Compare the mutual funds using only the given data."),
+        ("system", "Compare mutual funds using only the given data."),
         ("human", context)
     ])
     return llm.invoke(prompt.format_messages()).content
@@ -141,6 +141,10 @@ def comparison_agent(docs: List[Document]) -> str:
 # ORCHESTRATOR (MANUAL, AGENTIC)
 # -----------------------------------------------------
 def orchestrator(user_query: str) -> str:
+    # 🔒 HARD GUARD — prevents Groq BadRequest
+    if not user_query or not user_query.strip():
+        return "Please enter a valid mutual fund related question."
+
     intent = intent_agent(user_query)
     profile = user_profile_agent()
     docs = retrieval_agent(user_query)
@@ -154,7 +158,6 @@ def orchestrator(user_query: str) -> str:
     if intent == "exit":
         return "Thank you! Let me know if you need anything else."
 
-    # Default → recommendation
     recommendation = recommendation_agent(profile, docs)
     return explanation_agent(recommendation)
 
@@ -175,12 +178,18 @@ with st.sidebar:
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
+if "last_query" not in st.session_state:
+    st.session_state.last_query = None
+
 user_input = st.chat_input("Ask anything about mutual funds...")
 
-if user_input:
-    response = orchestrator(user_input)
-    st.session_state.chat.append(("user", user_input))
-    st.session_state.chat.append(("assistant", response))
+# 🔒 RERUN PROTECTION — prevents duplicate Groq calls
+if user_input and user_input.strip():
+    if st.session_state.last_query != user_input:
+        st.session_state.last_query = user_input
+        response = orchestrator(user_input)
+        st.session_state.chat.append(("user", user_input))
+        st.session_state.chat.append(("assistant", response))
 
 for role, msg in st.session_state.chat:
     st.chat_message(role).write(msg)
