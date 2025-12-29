@@ -1,180 +1,138 @@
-# =====================================================
-# Agentic AI – Mutual Fund Recommendation System
-# (Streamlit-safe, Recommendation-grade)
-# =====================================================
-
 import streamlit as st
-from typing import Dict, List
-
+import pandas as pd
+import os
 from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.documents import Document
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
 
-# -----------------------------------------------------
+# -------------------------------
 # PAGE CONFIG
-# -----------------------------------------------------
+# -------------------------------
 st.set_page_config(
     page_title="Agentic AI – Mutual Fund Recommendation System",
     layout="wide"
 )
+
 st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
 
-# -----------------------------------------------------
-# LLM (GROQ – SUPPORTED MODEL)
-# -----------------------------------------------------
-llm = ChatGroq(
-    api_key=st.secrets["GROQ_API_KEY"],
-    model="llama-3.1-8b-instant",
-    temperature=0.1,
-    streaming=False
+# -------------------------------
+# LOAD DATASET
+# -------------------------------
+@st.cache_data
+def load_data():
+    return pd.read_csv("Mutual Funds Data.csv")
+
+df = load_data()
+
+# -------------------------------
+# SIDEBAR INPUTS (HARD CONSTRAINTS)
+# -------------------------------
+st.sidebar.header("Investor Profile")
+
+risk_profile = st.sidebar.selectbox(
+    "Risk Profile", ["Low", "Moderate", "High"]
 )
 
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
+investment_horizon = st.sidebar.selectbox(
+    "Investment Horizon", ["Short", "Medium", "Long"]
 )
 
-# -----------------------------------------------------
-# AGENT 1: INTENT CLASSIFICATION
-# -----------------------------------------------------
-def intent_agent(query: str) -> str:
-    prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            "Classify the intent. Return ONLY one word:\n"
-            "recommendation, explanation, comparison, market, exit"
-        ),
-        ("human", query)
-    ])
-    return llm.invoke(prompt.format_messages()).content.strip().lower()
+preference = st.sidebar.multiselect(
+    "Preferences",
+    ["Stability", "Growth", "Tax Saving"],
+    max_selections=1
+)
 
-# -----------------------------------------------------
-# AGENT 2: USER PROFILING
-# -----------------------------------------------------
-def user_profile_agent() -> Dict:
-    return {
-        "risk": st.session_state["risk"],
-        "horizon": st.session_state["horizon"],
-        "preferences": st.session_state["preferences"]
-    }
+preference = preference[0] if preference else None
 
-# -----------------------------------------------------
-# AGENT 3: STATIC MUTUAL FUND DATA (OPTION 1 FIX)
-# -----------------------------------------------------
-def load_mutual_fund_data() -> List[Document]:
-    funds = [
-        "Fund Name: SBI Magnum Low Duration Fund, Category: Debt, 1Y Return: 7%, 3Y Return: 6.8%, Risk Level: Low",
-        "Fund Name: HDFC Balanced Advantage Fund, Category: Hybrid, 1Y Return: 12%, 3Y Return: 14%, Risk Level: Moderate",
-        "Fund Name: ICICI Prudential Bluechip Fund, Category: Equity, 1Y Return: 15%, 3Y Return: 16%, Risk Level: Moderate",
-        "Fund Name: Axis Long Term Equity Fund, Category: ELSS, 1Y Return: 18%, 3Y Return: 20%, Risk Level: High",
-        "Fund Name: Kotak Equity Opportunities Fund, Category: Equity, 1Y Return: 16%, 3Y Return: 17%, Risk Level: Moderate"
-    ]
-
-    return [Document(page_content=fund) for fund in funds]
-
-# -----------------------------------------------------
-# AGENT 4: RETRIEVAL (RAG)
-# -----------------------------------------------------
-def retrieval_agent(query: str) -> List[Document]:
-    docs = load_mutual_fund_data()
-    vectordb = Chroma.from_documents(docs, embeddings)
-    retriever = vectordb.as_retriever(search_kwargs={"k": 5})
-    return retriever.invoke(query)
-
-# -----------------------------------------------------
-# AGENT 5: RECOMMENDATION (STRICT & RANKED)
-# -----------------------------------------------------
-def recommendation_agent(profile: Dict, docs: List[Document]) -> str:
-    context = "\n".join(d.page_content for d in docs)
-
-    prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            "You are a mutual fund recommendation engine.\n"
-            "Rules:\n"
-            "1. Select ONLY fund names present in the data\n"
-            "2. Rank funds from best to worst\n"
-            "3. Match the user's risk profile and preferences\n"
-            "4. Give 1 short reason per fund\n"
-            "5. NO generic advice"
-        ),
-        (
-            "human",
-            f"""
-User Profile:
-Risk: {profile['risk']}
-Investment Horizon: {profile['horizon']}
-Preferences: {profile['preferences']}
-
-Available Mutual Fund Data:
-{context}
-
-Return output strictly in this format:
-1. Fund Name – Reason
-2. Fund Name – Reason
-"""
+# -------------------------------
+# FILTER LOGIC (CORE FIX)
+# -------------------------------
+def apply_preference_filter(df, preference):
+    if preference == "Stability":
+        return df.sort_values(
+            by=["risk_level", "fund_size_cr", "returns_3yr"],
+            ascending=[True, False, False]
         )
-    ])
 
-    return llm.invoke(prompt.format_messages()).content
+    if preference == "Growth":
+        return df.sort_values(
+            by=["returns_3yr", "returns_5yr", "sharpe"],
+            ascending=[False, False, False]
+        )
 
-# -----------------------------------------------------
-# AGENT 6: COMPARISON
-# -----------------------------------------------------
-def comparison_agent(docs: List[Document]) -> str:
-    context = "\n".join(d.page_content for d in docs)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "Compare the mutual funds using only the given data."),
-        ("human", context)
-    ])
-    return llm.invoke(prompt.format_messages()).content
+    if preference == "Tax Saving":
+        return df[df["category"].str.contains("ELSS", case=False, na=False)]
 
-# -----------------------------------------------------
-# ORCHESTRATOR
-# -----------------------------------------------------
-def orchestrator(query: str) -> str:
-    if not query or not query.strip():
-        return "Please enter a valid mutual fund related question."
+    return df
 
-    intent = intent_agent(query)
-    profile = user_profile_agent()
-    docs = retrieval_agent(query)
+# -------------------------------
+# CHAT INPUT
+# -------------------------------
+user_query = st.chat_input("Ask anything about mutual funds...")
 
-    if intent == "comparison":
-        return comparison_agent(docs)
+# -------------------------------
+# LLM (EXPLANATION ONLY)
+# -------------------------------
+llm = ChatGroq(
+    api_key=os.environ.get("GROQ_API_KEY"),
+    model="llama3-8b-8192",
+    temperature=0.3
+)
 
-    if intent == "exit":
-        return "Thank you for using the Mutual Fund Recommendation System."
+# -------------------------------
+# MAIN LOGIC
+# -------------------------------
+if user_query and preference:
 
-    return recommendation_agent(profile, docs)
+    filtered_df = apply_preference_filter(df, preference)
 
-# -----------------------------------------------------
-# STREAMLIT UI
-# -----------------------------------------------------
-with st.sidebar:
-    st.session_state["risk"] = st.selectbox("Risk Profile", ["Low", "Medium", "High"])
-    st.session_state["horizon"] = st.selectbox(
-        "Investment Horizon", ["Short", "Medium", "Long"]
-    )
-    st.session_state["preferences"] = st.multiselect(
-        "Preferences", ["Growth", "Stability", "Tax Saving"]
-    )
+    if filtered_df.empty:
+        st.error("No mutual funds match the selected preference.")
+    else:
+        top_funds = filtered_df.head(5)[[
+            "scheme_name",
+            "category",
+            "risk_level",
+            "returns_1yr",
+            "returns_3yr",
+            "returns_5yr",
+            "expense_ratio"
+        ]]
 
-if "chat" not in st.session_state:
-    st.session_state.chat = []
+        st.subheader("📌 Recommended Mutual Funds")
 
-if "last_query" not in st.session_state:
-    st.session_state.last_query = None
+        for i, row in top_funds.iterrows():
+            st.markdown(
+                f"""
+**{row['scheme_name']}**  
+• Category: {row['category']}  
+• Risk Level: {row['risk_level']}  
+• 3Y Return: {row['returns_3yr']}%  
+• Expense Ratio: {row['expense_ratio']}%
+"""
+            )
 
-user_input = st.chat_input("Ask anything about mutual funds...")
+        # -------- LLM Explanation (Grounded)
+        context = top_funds.to_string(index=False)
 
-if user_input and user_input.strip():
-    if st.session_state.last_query != user_input:
-        st.session_state.last_query = user_input
-        response = orchestrator(user_input)
-        st.session_state.chat.append(("user", user_input))
-        st.session_state.chat.append(("assistant", response))
+        explanation_prompt = f"""
+Using ONLY the mutual fund data below, explain why these funds
+are suitable for a user with:
 
-for role, msg in st.session_state.chat:
-    st.chat_message(role).write(msg)
+Risk Profile: {risk_profile}
+Investment Horizon: {investment_horizon}
+Preference: {preference}
+
+Do NOT add new fund names.
+Do NOT give investment advice.
+
+DATA:
+{context}
+"""
+
+        explanation = llm.invoke(explanation_prompt)
+
+        st.subheader("🧠 Explanation")
+        st.write(explanation.content)
+
+elif user_query and not preference:
+    st.warning("Please select a preference (Stability / Growth / Tax Saving).")
