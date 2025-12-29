@@ -5,5 +5,3 @@ langchain-groq
 langchain-huggingface
 sentence-transformers
 chromadb
-beautifulsoup4
-requests
