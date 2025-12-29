@@ -1,17 +1,10 @@
 # ==========================================
 # Agentic AI – Mutual Fund Recommendation System
-# Robust CSV + Chatbot + Safe LLM
+# Dataset-Driven + Chat Agent (No Auto LLM Calls)
 # ==========================================
 
 import streamlit as st
 import pandas as pd
-
-# Optional LLM (safe)
-try:
-    from groq import Groq
-    LLM_AVAILABLE = True
-except:
-    LLM_AVAILABLE = False
 
 # ------------------------------------------
 # Page Config
@@ -28,51 +21,73 @@ st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
 # ------------------------------------------
 @st.cache_data
 def load_data():
-    df = pd.read_csv("Mutual Funds Data.csv")
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
-    return df
+    return pd.read_csv("Mutual Funds Data.csv")
 
 df = load_data()
-
-# ------------------------------------------
-# Auto Column Detection (CRITICAL FIX)
-# ------------------------------------------
-def find_column(possible_names):
-    for col in df.columns:
-        for name in possible_names:
-            if name in col:
-                return col
-    return None
-
-COL_FUND = find_column(["fund"])
-COL_CATEGORY = find_column(["category"])
-COL_RISK = find_column(["risk"])
-COL_RET1Y = find_column(["1y"])
-COL_RET3Y = find_column(["3y"])
-COL_EXPENSE = find_column(["expense"])
-
-required = [COL_FUND, COL_CATEGORY, COL_RISK, COL_RET1Y, COL_RET3Y, COL_EXPENSE]
-if any(c is None for c in required):
-    st.error("Dataset columns not recognized. Please check CSV structure.")
-    st.stop()
 
 # ------------------------------------------
 # Sidebar – Investor Preferences
 # ------------------------------------------
 st.sidebar.header("Investor Preferences")
 
-risk_profile = st.sidebar.selectbox("Risk Profile", ["Low", "Medium", "High"])
-preference = st.sidebar.selectbox(
-    "Primary Preference", ["Stability", "Growth", "Tax Saving"]
+risk_profile = st.sidebar.selectbox(
+    "Risk Profile",
+    ["Low", "Medium", "High"]
 )
-top_k = st.sidebar.slider("Number of Recommendations", 1, 10, 5)
 
-generate = st.sidebar.button("Get Recommendations")
+investment_horizon = st.sidebar.selectbox(
+    "Investment Horizon",
+    ["Short", "Medium", "Long"]
+)
+
+preference = st.sidebar.selectbox(
+    "Primary Preference",
+    ["Stability", "Growth", "Tax Saving"]
+)
+
+top_k = st.sidebar.slider(
+    "Number of Recommendations",
+    1, 10, 5
+)
+
+get_reco = st.sidebar.button("Get Recommendations")
 
 # ------------------------------------------
 # Risk Mapping
 # ------------------------------------------
-RISK_MAP = {"Low": 1, "Medium": 2, "High": 3}
+RISK_MAP = {
+    "Low": 2,
+    "Medium": 3,
+    "High": 5
+}
+
+# ------------------------------------------
+# Recommendation Agent (Deterministic)
+# ------------------------------------------
+def recommendation_agent(data):
+    filtered = data.copy()
+
+    # Risk filter
+    filtered = filtered[filtered["Risk Level"] <= RISK_MAP[risk_profile]]
+
+    # Preference logic
+    if preference == "Stability":
+        filtered = filtered.sort_values(
+            by=["Risk Level", "Expense Ratio (%)"]
+        )
+
+    elif preference == "Growth":
+        filtered = filtered.sort_values(
+            by=["3Y Return (%)", "1Y Return (%)"],
+            ascending=False
+        )
+
+    elif preference == "Tax Saving":
+        filtered = filtered[
+            filtered["Category"].str.contains("ELSS", case=False, na=False)
+        ]
+
+    return filtered.head(top_k)
 
 # ------------------------------------------
 # Session State
@@ -81,106 +96,107 @@ if "recommendations" not in st.session_state:
     st.session_state.recommendations = None
 
 # ------------------------------------------
-# Recommendation Agent (NO LLM)
-# ------------------------------------------
-def recommendation_agent(data, risk, pref, k):
-    df = data.copy()
-
-    df = df[df[COL_RISK] <= RISK_MAP[risk]]
-
-    if pref == "Growth":
-        df = df.sort_values(by=[COL_RET3Y, COL_RET1Y], ascending=False)
-
-    elif pref == "Stability":
-        df = df.sort_values(by=[COL_RISK, COL_EXPENSE])
-
-    elif pref == "Tax Saving":
-        df = df[df[COL_CATEGORY].str.contains("elss", case=False, na=False)]
-
-    return df.head(k)
-
-# ------------------------------------------
 # Generate Recommendations (ONLY ON CLICK)
 # ------------------------------------------
-if generate:
-    st.session_state.recommendations = recommendation_agent(
-        df, risk_profile, preference, top_k
-    )
+if get_reco:
+    st.session_state.recommendations = recommendation_agent(df)
 
 # ------------------------------------------
-# Decision Variables
+# Show Dataset Variables Used
 # ------------------------------------------
-st.markdown("### 📊 Decision Variables Used")
-st.write([COL_RISK, COL_CATEGORY, COL_RET1Y, COL_RET3Y, COL_EXPENSE])
+with st.expander("📊 Decision Variables Used"):
+    st.markdown("""
+- **Risk Level**
+- **1Y Return (%)**
+- **3Y Return (%)**
+- **Expense Ratio (%)**
+- **Category**
+""")
 
 # ------------------------------------------
 # Display Recommendations
 # ------------------------------------------
 if st.session_state.recommendations is not None:
-    recos = st.session_state.recommendations
+    recs = st.session_state.recommendations
 
-    st.markdown(f"### 📌 Top {len(recos)} Recommended Mutual Funds")
+    if recs.empty:
+        st.warning("No funds matched your criteria.")
+    else:
+        st.subheader(f"📌 Top {len(recs)} Recommended Mutual Funds")
 
-    for _, row in recos.iterrows():
-        st.markdown(
-            f"""
-**{row[COL_FUND]}**
-- Category: {row[COL_CATEGORY]}
-- Risk Level: {row[COL_RISK]}
-- 1Y Return: {row[COL_RET1Y]}%
-- 3Y Return: {row[COL_RET3Y]}%
-- Expense Ratio: {row[COL_EXPENSE]}%
+        for _, row in recs.iterrows():
+            st.markdown(
+                f"""
+**{row['Fund Name']}**
+- Category: {row['Category']}
+- Risk Level: {row['Risk Level']}
+- 1Y Return: {row['1Y Return (%)']}%
+- 3Y Return: {row['3Y Return (%)']}%
+- Expense Ratio: {row['Expense Ratio (%)']}%
 ---
 """
-        )
+            )
 
 # ------------------------------------------
-# Chatbot – Follow-ups & Intent
+# Chat Agent (Explanation / Follow-ups)
 # ------------------------------------------
-st.markdown("---")
-st.subheader("💬 Chat with the Agent")
+st.markdown("### 💬 Chat with the Agent")
 
 user_query = st.text_input(
-    "Ask follow-ups or type: 'recommend based on stability'"
+    "Ask follow-ups like: 'Why were these funds recommended?'"
 )
 
 if user_query:
-
-    if "recommend" in user_query.lower():
-        st.session_state.recommendations = recommendation_agent(
-            df, risk_profile, preference, top_k
-        )
-        st.success("Recommendations updated based on your request.")
-
-    elif st.session_state.recommendations is None:
-        st.info("Please generate recommendations first.")
-
+    if st.session_state.recommendations is None:
+        st.warning("Please generate recommendations first.")
     else:
-        if LLM_AVAILABLE:
-            try:
-                client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-                context = st.session_state.recommendations.to_string(index=False)
+        q = user_query.lower()
+        recs = st.session_state.recommendations
 
-                prompt = f"""
-You are an explanation agent.
-Use ONLY the data below.
+        if "why" in q:
+            st.success(
+                "These funds were recommended because they match your selected "
+                "risk profile, preference, and investment horizon using dataset "
+                "variables such as Risk Level, Returns, Category, and Expense Ratio."
+            )
 
-DATA:
-{context}
+        elif "risk" in q:
+            st.success(
+                "Risk was evaluated using the 'Risk Level' column. "
+                "Only funds within your selected risk tolerance were chosen."
+            )
 
-Question:
-{user_query}
-"""
+        elif "return" in q:
+            st.success(
+                "Returns were evaluated using 1-Year and 3-Year return columns "
+                "from the dataset."
+            )
 
-                response = client.chat.completions.create(
-                    model="llama3-8b-8192",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3
-                )
+        elif "compare" in q and len(recs) >= 2:
+            f1, f2 = recs.iloc[0], recs.iloc[1]
+            st.success(
+                f"Comparison:\n\n"
+                f"- {f1['Fund Name']} → Risk: {f1['Risk Level']}, "
+                f"3Y Return: {f1['3Y Return (%)']}%\n"
+                f"- {f2['Fund Name']} → Risk: {f2['Risk Level']}, "
+                f"3Y Return: {f2['3Y Return (%)']}%"
+            )
 
-                st.write(response.choices[0].message.content)
-
-            except:
-                st.warning("LLM unavailable. Showing dataset-based results only.")
         else:
-            st.warning("LLM not configured.")
+            st.info(
+                "You can ask about:\n"
+                "- Why funds were recommended\n"
+                "- Risk level\n"
+                "- Returns\n"
+                "- Expense ratio\n"
+                "- Comparison between funds"
+            )
+
+# ------------------------------------------
+# Footer
+# ------------------------------------------
+st.caption(
+    "Recommendations are generated using deterministic, dataset-driven logic. "
+    "The chat agent explains and reasons over the recommendations without "
+    "regenerating them."
+)
