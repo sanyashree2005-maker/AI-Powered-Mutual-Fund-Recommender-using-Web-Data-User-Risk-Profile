@@ -12,15 +12,15 @@ st.set_page_config(
 )
 
 # =============================
-# LOAD GROQ LLM
+# LOAD GROQ LLM (STABLE MODEL)
 # =============================
 llm = ChatGroq(
-    model="mixtral-8x7b-32768",
+    model="llama3-8b-8192",
     temperature=0
 )
 
 # =============================
-# SESSION MEMORY (FOLLOW-UPS)
+# SESSION MEMORY (FOR FOLLOW-UPS)
 # =============================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
@@ -32,7 +32,7 @@ if "chat_history" not in st.session_state:
 def safe_llm_call(prompt: str) -> str:
     try:
         return llm.invoke(prompt).content
-    except Exception as e:
+    except Exception:
         return "⚠️ The system is temporarily unavailable. Please try again."
 
 # =============================
@@ -40,7 +40,7 @@ def safe_llm_call(prompt: str) -> str:
 # =============================
 def intent_agent(query: str) -> str:
     prompt = f"""
-    Classify the user's intent into ONE word only:
+    Classify the user's intent into ONE word:
     market | recommendation | explanation | comparison | exit
 
     Query: {query}
@@ -50,7 +50,7 @@ def intent_agent(query: str) -> str:
 def market_agent(query: str) -> str:
     prompt = f"""
     You are a mutual fund market intelligence assistant.
-    Respond like a finance website.
+    Answer like a finance website.
     Avoid exact numbers unless certain.
 
     Question:
@@ -61,13 +61,13 @@ def market_agent(query: str) -> str:
 def recommendation_agent(query: str, profile: dict) -> str:
     prompt = f"""
     Investor Profile:
-    - Risk Level: {profile['risk']}
-    - Investment Horizon: {profile['horizon']}
-    - Investment Amount: {profile['amount']}
+    Risk Level: {profile['risk']}
+    Investment Horizon: {profile['horizon']}
+    Investment Amount: {profile['amount']}
 
     Task:
     Recommend suitable mutual fund categories and examples.
-    Provide a short explanation.
+    Explain briefly.
 
     User Question:
     {query}
@@ -98,7 +98,11 @@ st.caption(
 st.sidebar.header("Investor Profile")
 risk = st.sidebar.selectbox("Risk Profile", ["Low", "Medium", "High"])
 horizon = st.sidebar.selectbox("Investment Horizon", ["Short", "Medium", "Long"])
-amount = st.sidebar.number_input("Investment Amount", min_value=1000, step=500)
+amount = st.sidebar.number_input(
+    "Investment Amount",
+    min_value=1000,
+    step=500
+)
 
 query = st.text_input("Ask anything about mutual funds")
 
