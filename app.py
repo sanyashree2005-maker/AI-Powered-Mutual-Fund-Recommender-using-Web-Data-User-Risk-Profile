@@ -1,5 +1,6 @@
 # =====================================================
-# Agentic AI – Mutual Fund Recommender (Streamlit Safe)
+# Agentic AI – Mutual Fund Recommendation System
+# (Streamlit-safe, Recommender-grade)
 # =====================================================
 
 import streamlit as st
@@ -20,15 +21,15 @@ st.set_page_config(
     page_title="Agentic AI – Mutual Fund Recommender",
     layout="wide"
 )
-st.title("🤖 Agentic AI – Mutual Fund Recommender")
+st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
 
 # -----------------------------------------------------
-# LLM (UPDATED GROQ MODEL – CRITICAL FIX)
+# LLM (GROQ – SUPPORTED MODEL)
 # -----------------------------------------------------
 llm = ChatGroq(
     api_key=st.secrets["GROQ_API_KEY"],
-    model="llama-3.1-8b-instant",   # ✅ supported Groq model
-    temperature=0.2,
+    model="llama-3.1-8b-instant",
+    temperature=0.1,   # 🔑 low temperature = less generic output
     streaming=False
 )
 
@@ -61,7 +62,7 @@ def user_profile_agent() -> Dict:
     }
 
 # -----------------------------------------------------
-# AGENT 3: WEB SCRAPING (PUBLIC DATA)
+# AGENT 3: WEB DATA SCRAPING
 # -----------------------------------------------------
 def scrape_mutual_funds() -> List[Document]:
     url = "https://www.moneycontrol.com/mutual-funds/performance-tracker/returns/equity.html"
@@ -77,8 +78,11 @@ def scrape_mutual_funds() -> List[Document]:
             docs.append(
                 Document(
                     page_content=(
-                        f"Fund: {cols[0]}, Category: {cols[1]}, "
-                        f"1Y Return: {cols[2]}, 3Y Return: {cols[3]}, Risk: {cols[4]}"
+                        f"Fund Name: {cols[0]}, "
+                        f"Category: {cols[1]}, "
+                        f"1Y Return: {cols[2]}, "
+                        f"3Y Return: {cols[3]}, "
+                        f"Risk Level: {cols[4]}"
                     )
                 )
             )
@@ -97,17 +101,41 @@ def retrieval_agent(query: str) -> List[Document]:
     return retriever.invoke(query)
 
 # -----------------------------------------------------
-# AGENT 5: RECOMMENDATION
+# AGENT 5: RECOMMENDATION (STRICT & RANKED)
 # -----------------------------------------------------
 def recommendation_agent(profile: Dict, docs: List[Document]) -> str:
     if not docs:
-        return "Mutual fund data is currently unavailable from public sources."
+        return "Mutual fund data is not available from current public sources."
 
     context = "\n".join(d.page_content for d in docs)
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Recommend suitable mutual funds using ONLY the given data."),
-        ("human", f"User Profile: {profile}\n\nData:\n{context}")
+        (
+            "system",
+            "You are a mutual fund recommendation engine.\n"
+            "Rules:\n"
+            "1. Select ONLY fund names present in the data\n"
+            "2. Rank the funds from best to worst\n"
+            "3. Give 1–2 concrete reasons per fund\n"
+            "4. NO generic financial advice\n"
+            "5. If data is insufficient, clearly say so"
+        ),
+        (
+            "human",
+            f"""
+User Profile:
+Risk: {profile['risk']}
+Investment Horizon: {profile['horizon']}
+Preferences: {profile['preferences']}
+
+Available Mutual Fund Data:
+{context}
+
+Return the answer strictly in this format:
+1. Fund Name – Reason
+2. Fund Name – Reason
+"""
+        )
     ])
 
     return llm.invoke(prompt.format_messages()).content
@@ -117,7 +145,7 @@ def recommendation_agent(profile: Dict, docs: List[Document]) -> str:
 # -----------------------------------------------------
 def explanation_agent(text: str) -> str:
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Explain the recommendation clearly and safely."),
+        ("system", "Explain the recommendation clearly using the given context."),
         ("human", text)
     ])
     return llm.invoke(prompt.format_messages()).content
@@ -127,17 +155,17 @@ def explanation_agent(text: str) -> str:
 # -----------------------------------------------------
 def comparison_agent(docs: List[Document]) -> str:
     if not docs:
-        return "Not enough data available for comparison."
+        return "Not enough mutual fund data to perform comparison."
 
     context = "\n".join(d.page_content for d in docs)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Compare the mutual funds using only the given data."),
+        ("system", "Compare the mutual funds strictly using the given data."),
         ("human", context)
     ])
     return llm.invoke(prompt.format_messages()).content
 
 # -----------------------------------------------------
-# ORCHESTRATOR (MANUAL, AGENTIC)
+# ORCHESTRATOR
 # -----------------------------------------------------
 def orchestrator(query: str) -> str:
     if not query or not query.strip():
@@ -154,10 +182,10 @@ def orchestrator(query: str) -> str:
         return explanation_agent(query)
 
     if intent == "exit":
-        return "Thank you for using the Mutual Fund Recommender."
+        return "Thank you for using the Mutual Fund Recommendation System."
 
     recommendation = recommendation_agent(profile, docs)
-    return explanation_agent(recommendation)
+    return recommendation
 
 # -----------------------------------------------------
 # STREAMLIT UI
@@ -179,7 +207,6 @@ if "last_query" not in st.session_state:
 
 user_input = st.chat_input("Ask anything about mutual funds...")
 
-# 🔒 Prevent duplicate Groq calls on reruns
 if user_input and user_input.strip():
     if st.session_state.last_query != user_input:
         st.session_state.last_query = user_input
