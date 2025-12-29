@@ -1,20 +1,15 @@
 # ==========================================
 # Agentic AI – Mutual Fund Recommendation System
-# FINAL STABLE VERSION
+# FINAL CRASH-PROOF VERSION
 # ==========================================
 
 import streamlit as st
 import pandas as pd
 import os
 
-# ---------- OPTIONAL LLM (Groq) ----------
-USE_LLM = "GROQ_API_KEY" in st.secrets or os.getenv("GROQ_API_KEY")
-
-if USE_LLM:
-    from groq import Groq
-    client = Groq(api_key=st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY")))
-
-# ---------- PAGE CONFIG ----------
+# ------------------------------------------
+# Page Config
+# ------------------------------------------
 st.set_page_config(
     page_title="Agentic AI – Mutual Fund Recommendation System",
     layout="wide"
@@ -22,111 +17,145 @@ st.set_page_config(
 
 st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
 
-# ---------- LOAD DATA ----------
+# ------------------------------------------
+# Load Dataset
+# ------------------------------------------
 @st.cache_data
 def load_data():
     df = pd.read_csv("Mutual Funds Data.csv")
-    df.columns = df.columns.str.strip()  # safety
+    df.columns = df.columns.str.strip()
     return df
 
 df = load_data()
 
-# ---------- AUTO COLUMN DETECTION (NO KEYERROR EVER) ----------
-def find_col(keyword):
-    for col in df.columns:
-        if keyword.lower() in col.lower():
-            return col
+# ------------------------------------------
+# Safe Column Resolver (NO KeyError)
+# ------------------------------------------
+def col(name):
+    for c in df.columns:
+        if name.lower() in c.lower():
+            return c
     return None
 
-COL = {
-    "fund": find_col("fund"),
-    "category": find_col("category"),
-    "risk": find_col("risk"),
-    "expense": find_col("expense"),
-    "ret1y": find_col("1"),
-    "ret3y": find_col("3"),
-}
+COL_FUND = col("fund")
+COL_CAT = col("category")
+COL_RISK = col("risk")
+COL_EXP = col("expense")
+COL_1Y = col("1")
+COL_3Y = col("3")
 
-missing = [k for k, v in COL.items() if v is None]
-if missing:
-    st.error(f"Dataset missing required columns: {missing}")
+required = [COL_FUND, COL_CAT, COL_RISK, COL_EXP, COL_1Y, COL_3Y]
+if any(c is None for c in required):
+    st.error("Dataset columns not compatible. Please check CSV.")
     st.stop()
 
-# ---------- SIDEBAR ----------
+# ------------------------------------------
+# Sidebar Controls
+# ------------------------------------------
 st.sidebar.header("Investor Preferences")
 
 risk_profile = st.sidebar.selectbox("Risk Profile", ["Low", "Medium", "High"])
 preference = st.sidebar.selectbox("Primary Preference", ["Stability", "Growth", "Tax Saving"])
 top_k = st.sidebar.slider("Number of Recommendations", 1, 10, 5)
 
-get_reco = st.sidebar.button("Get Recommendations")
+run_btn = st.sidebar.button("Get Recommendations")
 
-# ---------- AGENT: RECOMMENDATION ----------
+# ------------------------------------------
+# Recommendation Agent (Deterministic)
+# ------------------------------------------
 def recommendation_agent(data):
-    filtered = data.copy()
+    df = data.copy()
 
     risk_map = {"Low": 1, "Medium": 2, "High": 3}
-    filtered = filtered[filtered[COL["risk"]] <= risk_map[risk_profile]]
+    df = df[df[COL_RISK] <= risk_map[risk_profile]]
 
     if preference == "Stability":
-        filtered = filtered.sort_values(by=COL["expense"])
+        df = df.sort_values(by=COL_EXP)
     elif preference == "Growth":
-        filtered = filtered.sort_values(by=[COL["ret3y"], COL["ret1y"]], ascending=False)
+        df = df.sort_values(by=[COL_3Y, COL_1Y], ascending=False)
     elif preference == "Tax Saving":
-        filtered = filtered[filtered[COL["category"]].str.contains("ELSS", case=False, na=False)]
+        df = df[df[COL_CAT].str.contains("ELSS", case=False, na=False)]
 
-    return filtered.head(top_k)
+    return df.head(top_k)
 
-# ---------- SESSION STATE ----------
-if "recommendations" not in st.session_state:
-    st.session_state.recommendations = None
+# ------------------------------------------
+# Session State
+# ------------------------------------------
+if "reco" not in st.session_state:
+    st.session_state.reco = None
 
-# ---------- RUN ONLY ON BUTTON ----------
-if get_reco:
-    st.session_state.recommendations = recommendation_agent(df)
+# ------------------------------------------
+# Run Recommendation ONLY on Button
+# ------------------------------------------
+if run_btn:
+    st.session_state.reco = recommendation_agent(df)
 
-# ---------- DISPLAY ----------
-if st.session_state.recommendations is not None:
-    st.subheader(f"📌 Top {len(st.session_state.recommendations)} Recommended Mutual Funds")
+# ------------------------------------------
+# Display Recommendations
+# ------------------------------------------
+if st.session_state.reco is not None:
+    st.subheader(f"📌 Top {len(st.session_state.reco)} Recommended Mutual Funds")
 
-    for _, row in st.session_state.recommendations.iterrows():
+    for _, r in st.session_state.reco.iterrows():
         st.markdown(f"""
-**{row[COL['fund']]}**
-- Category: {row[COL['category']]}
-- Risk Level: {row[COL['risk']]}
-- 1Y Return: {row[COL['ret1y']]}%
-- 3Y Return: {row[COL['ret3y']]}%
-- Expense Ratio: {row[COL['expense']]}%
+**{r[COL_FUND]}**
+- Category: {r[COL_CAT]}
+- Risk Level: {r[COL_RISK]}
+- 1Y Return: {r[COL_1Y]}%
+- 3Y Return: {r[COL_3Y]}%
+- Expense Ratio: {r[COL_EXP]}%
 ---
 """)
 
-# ---------- CHATBOT ----------
+# ------------------------------------------
+# Chat Agent (LLM OPTIONAL, SAFE)
+# ------------------------------------------
 st.markdown("### 💬 Chat with the Agent")
 
-user_q = st.text_input(
+query = st.text_input(
     "Ask follow-ups (e.g. 'why stability funds?', 'compare first two funds')"
 )
 
-if user_q and st.session_state.recommendations is not None:
-    if USE_LLM:
-        context = st.session_state.recommendations.to_string(index=False)
-        prompt = f"""
+if query and st.session_state.reco is not None:
+
+    api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+
+    if not api_key:
+        st.info(
+            "LLM not configured. "
+            "Answering using dataset logic:\n\n"
+            "These funds match your selected risk profile and preference "
+            "based on expense ratio, returns, and category filters."
+        )
+    else:
+        try:
+            from groq import Groq
+            client = Groq(api_key=api_key)
+
+            context = st.session_state.reco[[COL_FUND, COL_CAT, COL_RISK, COL_1Y, COL_3Y, COL_EXP]].to_string(index=False)
+
+            prompt = f"""
 You are a financial assistant.
-Answer ONLY using the data below.
+Answer strictly using the data below.
 
 DATA:
 {context}
 
 QUESTION:
-{user_q}
+{query}
 """
-        response = client.chat.completions.create(
-            model="llama3-8b-8192",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        st.success(response.choices[0].message.content)
-    else:
-        st.info(
-            "LLM not configured. This system uses dataset-based recommendations. "
-            "Add GROQ_API_KEY to enable explanations."
-        )
+
+            response = client.chat.completions.create(
+                model="llama3-8b-8192",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2
+            )
+
+            st.success(response.choices[0].message.content)
+
+        except Exception as e:
+            st.warning(
+                "LLM temporarily unavailable.\n\n"
+                "This does NOT affect recommendations.\n"
+                "Please try again later."
+            )
