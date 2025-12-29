@@ -1,6 +1,6 @@
 # ==========================================
 # Agentic AI – Mutual Fund Recommendation System
-# CSV-Driven + Safe Explanation Agent
+# CSV-Driven + Safe Chatbot
 # ==========================================
 
 import streamlit as st
@@ -28,12 +28,26 @@ st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
 # ------------------------------------------
 @st.cache_data
 def load_data():
-    return pd.read_csv("Mutual Funds Data.csv")
+    df = pd.read_csv("Mutual Funds Data.csv")
+    df.columns = df.columns.str.strip()  # SAFETY
+    return df
 
 df = load_data()
 
 # ------------------------------------------
-# Sidebar – Controls
+# Column Mapping (CRITICAL FIX)
+# ------------------------------------------
+COLUMN_MAP = {
+    "fund": "Fund Name",
+    "category": "Category",
+    "risk": "Risk",
+    "ret1y": "1Y Return",
+    "ret3y": "3Y Return",
+    "expense": "Expense Ratio"
+}
+
+# ------------------------------------------
+# Sidebar – Investor Preferences
 # ------------------------------------------
 st.sidebar.header("Investor Preferences")
 
@@ -71,29 +85,32 @@ if "recommendations" not in st.session_state:
 def recommendation_agent(df, risk, preference, k):
     data = df.copy()
 
-    data = data[data["Risk Level"] <= RISK_MAP[risk]]
+    # Risk filter
+    data = data[data[COLUMN_MAP["risk"]] <= RISK_MAP[risk]]
 
+    # Preference logic
     if preference == "Growth":
         data = data.sort_values(
-            by=["3Y Return (%)", "1Y Return (%)"],
+            by=[COLUMN_MAP["ret3y"], COLUMN_MAP["ret1y"]],
             ascending=False
         )
 
     elif preference == "Stability":
         data = data.sort_values(
-            by=["Risk Level", "Expense Ratio (%)"],
+            by=[COLUMN_MAP["risk"], COLUMN_MAP["expense"]],
             ascending=[True, True]
         )
 
     elif preference == "Tax Saving":
         data = data[
-            data["Category"].str.contains("ELSS", case=False, na=False)
+            data[COLUMN_MAP["category"]]
+            .str.contains("ELSS", case=False, na=False)
         ]
 
     return data.head(k)
 
 # ------------------------------------------
-# Generate Recommendations ONLY ON CLICK
+# Generate Recommendations ONLY ON USER ACTION
 # ------------------------------------------
 if generate:
     st.session_state.recommendations = recommendation_agent(
@@ -101,19 +118,17 @@ if generate:
     )
 
 # ------------------------------------------
-# Display Recommendation Variables
+# Show Decision Variables
 # ------------------------------------------
 if st.session_state.recommendations is not None:
     st.markdown("### 📊 Decision Variables Used")
-    st.write(
-        [
-            "Risk Level",
-            "Category",
-            "1Y Return (%)",
-            "3Y Return (%)",
-            "Expense Ratio (%)"
-        ]
-    )
+    st.write([
+        COLUMN_MAP["risk"],
+        COLUMN_MAP["category"],
+        COLUMN_MAP["ret1y"],
+        COLUMN_MAP["ret3y"],
+        COLUMN_MAP["expense"]
+    ])
 
 # ------------------------------------------
 # Display Recommendations
@@ -121,35 +136,34 @@ if st.session_state.recommendations is not None:
 if st.session_state.recommendations is not None:
 
     recos = st.session_state.recommendations
-
     st.markdown(f"### 📌 Top {len(recos)} Recommended Mutual Funds")
 
     for _, row in recos.iterrows():
         st.markdown(
             f"""
-**{row['Fund Name']}**
-- Category: {row['Category']}
-- Risk Level: {row['Risk Level']}
-- 1Y Return: {row['1Y Return (%)']}%
-- 3Y Return: {row['3Y Return (%)']}%
-- Expense Ratio: {row['Expense Ratio (%)']}%
+**{row[COLUMN_MAP["fund"]]}**
+- Category: {row[COLUMN_MAP["category"]]}
+- Risk: {row[COLUMN_MAP["risk"]]}
+- 1Y Return: {row[COLUMN_MAP["ret1y"]]}%
+- 3Y Return: {row[COLUMN_MAP["ret3y"]]}%
+- Expense Ratio: {row[COLUMN_MAP["expense"]]}%
 ---
 """
         )
 
 # ------------------------------------------
-# Chatbot (Explanation Agent)
+# Chatbot – Follow-ups & Intent
 # ------------------------------------------
 st.markdown("---")
-st.subheader("💬 Ask Follow-up Questions")
+st.subheader("💬 Chat with the Agent")
 
 user_query = st.text_input(
-    "Ask about recommendations or type 'recommend based on stability'"
+    "Ask follow-ups or type 'recommend based on stability'"
 )
 
 if user_query:
 
-    # Intent trigger
+    # Intent-based recommendation
     if "recommend" in user_query.lower():
         st.session_state.recommendations = recommendation_agent(
             df, risk_profile, preference, top_k
@@ -167,9 +181,7 @@ if user_query:
 
                 prompt = f"""
 You are an explanation agent.
-
-Use ONLY the data below.
-Do not recommend new funds.
+Use ONLY the data below. Do not recommend new funds.
 
 DATA:
 {context}
@@ -187,11 +199,6 @@ Question:
                 st.write(response.choices[0].message.content)
 
             except:
-                st.warning(
-                    "LLM is temporarily unavailable. "
-                    "You can still view recommendations."
-                )
+                st.warning("LLM unavailable. Showing recommendations only.")
         else:
-            st.warning(
-                "LLM not configured. Chatbot explanation is disabled."
-            )
+            st.warning("LLM not configured.")
