@@ -4,7 +4,7 @@
 
 import streamlit as st
 import requests
-import bs4
+from bs4 import BeautifulSoup
 from typing import Dict, List
 
 from langchain_groq import ChatGroq
@@ -23,11 +23,11 @@ st.set_page_config(
 st.title("🤖 Agentic AI – Mutual Fund Recommender")
 
 # -----------------------------------------------------
-# LLM (NO STREAMING – GROQ SAFE)
+# LLM (UPDATED GROQ MODEL – CRITICAL FIX)
 # -----------------------------------------------------
 llm = ChatGroq(
     api_key=st.secrets["GROQ_API_KEY"],
-    model="llama3-8b-8192",
+    model="llama-3.1-8b-instant",   # ✅ supported Groq model
     temperature=0.2,
     streaming=False
 )
@@ -39,17 +39,16 @@ embeddings = HuggingFaceEmbeddings(
 # -----------------------------------------------------
 # AGENT 1: INTENT CLASSIFICATION
 # -----------------------------------------------------
-def intent_agent(user_query: str) -> str:
+def intent_agent(query: str) -> str:
     prompt = ChatPromptTemplate.from_messages([
         (
             "system",
-            "Classify intent. Return ONLY one word: "
+            "Classify the intent. Return ONLY one word:\n"
             "recommendation, explanation, comparison, market, exit"
         ),
-        ("human", user_query)
+        ("human", query)
     ])
-    result = llm.invoke(prompt.format_messages())
-    return result.content.strip().lower()
+    return llm.invoke(prompt.format_messages()).content.strip().lower()
 
 # -----------------------------------------------------
 # AGENT 2: USER PROFILING
@@ -62,12 +61,12 @@ def user_profile_agent() -> Dict:
     }
 
 # -----------------------------------------------------
-# AGENT 3: WEB DATA SCRAPING
+# AGENT 3: WEB SCRAPING (PUBLIC DATA)
 # -----------------------------------------------------
 def scrape_mutual_funds() -> List[Document]:
     url = "https://www.moneycontrol.com/mutual-funds/performance-tracker/returns/equity.html"
-    html = requests.get(url, timeout=10).text
-    soup = bs4.BeautifulSoup(html, "html.parser")
+    response = requests.get(url, timeout=10)
+    soup = BeautifulSoup(response.text, "html.parser")
 
     docs = []
     rows = soup.select("table tbody tr")[:15]
@@ -78,8 +77,8 @@ def scrape_mutual_funds() -> List[Document]:
             docs.append(
                 Document(
                     page_content=(
-                        f"Fund {cols[0]}, Category {cols[1]}, "
-                        f"1Y Return {cols[2]}, 3Y Return {cols[3]}, Risk {cols[4]}"
+                        f"Fund: {cols[0]}, Category: {cols[1]}, "
+                        f"1Y Return: {cols[2]}, 3Y Return: {cols[3]}, Risk: {cols[4]}"
                     )
                 )
             )
@@ -102,12 +101,12 @@ def retrieval_agent(query: str) -> List[Document]:
 # -----------------------------------------------------
 def recommendation_agent(profile: Dict, docs: List[Document]) -> str:
     if not docs:
-        return "Relevant mutual fund data is not available from public sources."
+        return "Mutual fund data is currently unavailable from public sources."
 
     context = "\n".join(d.page_content for d in docs)
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Recommend mutual funds strictly using the given data."),
+        ("system", "Recommend suitable mutual funds using ONLY the given data."),
         ("human", f"User Profile: {profile}\n\nData:\n{context}")
     ])
 
@@ -118,7 +117,7 @@ def recommendation_agent(profile: Dict, docs: List[Document]) -> str:
 # -----------------------------------------------------
 def explanation_agent(text: str) -> str:
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Explain clearly and safely."),
+        ("system", "Explain the recommendation clearly and safely."),
         ("human", text)
     ])
     return llm.invoke(prompt.format_messages()).content
@@ -128,11 +127,11 @@ def explanation_agent(text: str) -> str:
 # -----------------------------------------------------
 def comparison_agent(docs: List[Document]) -> str:
     if not docs:
-        return "Not enough data to compare mutual funds."
+        return "Not enough data available for comparison."
 
     context = "\n".join(d.page_content for d in docs)
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Compare mutual funds using only the given data."),
+        ("system", "Compare the mutual funds using only the given data."),
         ("human", context)
     ])
     return llm.invoke(prompt.format_messages()).content
@@ -140,23 +139,22 @@ def comparison_agent(docs: List[Document]) -> str:
 # -----------------------------------------------------
 # ORCHESTRATOR (MANUAL, AGENTIC)
 # -----------------------------------------------------
-def orchestrator(user_query: str) -> str:
-    # 🔒 HARD GUARD — prevents Groq BadRequest
-    if not user_query or not user_query.strip():
+def orchestrator(query: str) -> str:
+    if not query or not query.strip():
         return "Please enter a valid mutual fund related question."
 
-    intent = intent_agent(user_query)
+    intent = intent_agent(query)
     profile = user_profile_agent()
-    docs = retrieval_agent(user_query)
+    docs = retrieval_agent(query)
 
     if intent == "comparison":
         return comparison_agent(docs)
 
     if intent == "explanation":
-        return explanation_agent(user_query)
+        return explanation_agent(query)
 
     if intent == "exit":
-        return "Thank you! Let me know if you need anything else."
+        return "Thank you for using the Mutual Fund Recommender."
 
     recommendation = recommendation_agent(profile, docs)
     return explanation_agent(recommendation)
@@ -165,9 +163,7 @@ def orchestrator(user_query: str) -> str:
 # STREAMLIT UI
 # -----------------------------------------------------
 with st.sidebar:
-    st.session_state["risk"] = st.selectbox(
-        "Risk Profile", ["Low", "Medium", "High"]
-    )
+    st.session_state["risk"] = st.selectbox("Risk Profile", ["Low", "Medium", "High"])
     st.session_state["horizon"] = st.selectbox(
         "Investment Horizon", ["Short", "Medium", "Long"]
     )
@@ -183,7 +179,7 @@ if "last_query" not in st.session_state:
 
 user_input = st.chat_input("Ask anything about mutual funds...")
 
-# 🔒 RERUN PROTECTION — prevents duplicate Groq calls
+# 🔒 Prevent duplicate Groq calls on reruns
 if user_input and user_input.strip():
     if st.session_state.last_query != user_input:
         st.session_state.last_query = user_input
