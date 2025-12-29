@@ -1,6 +1,6 @@
 # ==========================================
 # Agentic AI – Mutual Fund Recommendation System
-# Dataset + Query Agent (NO LLM)
+# Dataset-Driven | Button-Triggered | Stable
 # ==========================================
 
 import streamlit as st
@@ -21,69 +21,113 @@ st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
 # ------------------------------------------
 @st.cache_data
 def load_data():
-    df = pd.read_csv("Mutual Funds Data.csv")
-    df.columns = [c.strip().lower() for c in df.columns]
-    return df
+    return pd.read_csv("Mutual Funds Data.csv")
 
 df = load_data()
 
 # ------------------------------------------
-# Auto Column Detection
+# Column Mapping (VERY IMPORTANT)
 # ------------------------------------------
-def find_col(keywords):
-    for col in df.columns:
-        for kw in keywords:
-            if kw in col:
-                return col
-    return None
-
-COL_FUND = find_col(["fund", "scheme", "name"])
-COL_CATEGORY = find_col(["category"])
-COL_RISK = find_col(["risk"])
-COL_1Y = find_col(["1y"])
-COL_3Y = find_col(["3y"])
-COL_EXPENSE = find_col(["expense"])
+COL_FUND = "Fund Name"
+COL_CATEGORY = "Category"
+COL_RISK = "Risk Level"
+COL_1Y = "1Y Return (%)"
+COL_3Y = "3Y Return (%)"
+COL_EXPENSE = "Expense Ratio (%)"
 
 # ------------------------------------------
 # Sidebar – Investor Profile
 # ------------------------------------------
 st.sidebar.header("Investor Profile")
 
-risk_profile = st.sidebar.selectbox("Risk Profile", ["Low", "Medium", "High"])
-investment_horizon = st.sidebar.selectbox("Investment Horizon", ["Short", "Medium", "Long"])
-preference = st.sidebar.multiselect(
-    "Preferences", ["Stability", "Growth", "Tax Saving"], default=["Stability"]
+risk_profile = st.sidebar.selectbox(
+    "Risk Profile",
+    ["Low", "Medium", "High"]
 )
-top_k = st.sidebar.slider("Number of recommendations", 1, 10, 5)
+
+investment_horizon = st.sidebar.selectbox(
+    "Investment Horizon",
+    ["Short", "Medium", "Long"]
+)
+
+preference = st.sidebar.selectbox(
+    "Primary Preference",
+    ["Stability", "Growth", "Tax Saving"]
+)
+
+top_k = st.sidebar.slider(
+    "Number of Recommendations",
+    1, 10, 5
+)
+
+generate = st.sidebar.button("🔍 Get Recommendations")
 
 # ------------------------------------------
-# Recommendation Agent
+# Risk Mapping
 # ------------------------------------------
-filtered = df.copy()
-
-if "Stability" in preference:
-    filtered = filtered[filtered[COL_RISK] <= 2]
-    filtered["score"] = (5 - filtered[COL_RISK]) + (1 / filtered[COL_EXPENSE])
-
-elif "Growth" in preference:
-    filtered["score"] = filtered[COL_3Y] * 1.5 + filtered[COL_1Y]
-
-elif "Tax Saving" in preference:
-    filtered = filtered[
-        filtered[COL_CATEGORY].str.contains("elss", case=False, na=False)
-    ]
-    filtered["score"] = filtered[COL_3Y]
-
-top_funds = filtered.sort_values("score", ascending=False).head(top_k)
+RISK_MAP = {
+    "Low": 2,
+    "Medium": 3,
+    "High": 5
+}
 
 # ------------------------------------------
-# Display Recommendations
+# Show Decision Variables
 # ------------------------------------------
-st.subheader(f"📌 Top {len(top_funds)} Recommended Mutual Funds")
+with st.expander("📊 Decision Variables Used"):
+    st.write("""
+- Risk Level  
+- 1-Year Return  
+- 3-Year Return  
+- Expense Ratio  
+- Fund Category  
+- User Risk Profile  
+- User Preference  
+""")
 
-for _, row in top_funds.iterrows():
-    st.markdown(
-        f"""
+# ------------------------------------------
+# Recommendation Logic (ONLY ON CLICK)
+# ------------------------------------------
+if generate:
+
+    filtered = df.copy()
+
+    # Risk-based filtering
+    filtered = filtered[filtered[COL_RISK] <= RISK_MAP[risk_profile]]
+
+    # Preference-based logic
+    if preference == "Stability":
+        filtered = filtered.sort_values(
+            by=[COL_RISK, COL_EXPENSE],
+            ascending=[True, True]
+        )
+
+    elif preference == "Growth":
+        filtered = filtered.sort_values(
+            by=[COL_3Y, COL_1Y],
+            ascending=False
+        )
+
+    elif preference == "Tax Saving":
+        filtered = filtered[
+            filtered[COL_CATEGORY].str.contains("ELSS", case=False, na=False)
+        ]
+
+    # Fallback
+    if filtered.empty:
+        st.warning("No mutual funds match the selected criteria.")
+        st.stop()
+
+    top_funds = filtered.head(top_k)
+
+    # ------------------------------------------
+    # Display Results
+    # ------------------------------------------
+    st.subheader(f"📌 Top {len(top_funds)} Recommended Mutual Funds")
+
+    for _, row in top_funds.iterrows():
+        st.markdown(
+            f"""
 **{row[COL_FUND]}**
 - Category: {row[COL_CATEGORY]}
 - Risk Level: {row[COL_RISK]}
@@ -92,53 +136,12 @@ for _, row in top_funds.iterrows():
 - Expense Ratio: {row[COL_EXPENSE]}%
 ---
 """
-    )
-
-# ==========================================
-# 🔎 QUERY AGENT (THIS IS WHAT YOU WERE MISSING)
-# ==========================================
-st.markdown("## 🔎 Ask Questions About the Dataset")
-
-query = st.text_input(
-    "Try: 'low risk funds', 'highest return fund', 'elss funds', 'lowest expense fund'"
-)
-
-if query:
-    q = query.lower()
-    result = df.copy()
-
-    if "low risk" in q:
-        result = result[result[COL_RISK] <= 2]
-
-    if "elss" in q or "tax" in q:
-        result = result[result[COL_CATEGORY].str.contains("elss", case=False, na=False)]
-
-    if "highest return" in q:
-        result = result.sort_values(COL_3Y, ascending=False).head(1)
-
-    if "lowest expense" in q:
-        result = result.sort_values(COL_EXPENSE).head(1)
-
-    st.subheader("📊 Query Result")
-
-    if result.empty:
-        st.warning("No matching results found.")
-    else:
-        for _, row in result.head(5).iterrows():
-            st.markdown(
-                f"""
-**{row[COL_FUND]}**
-- Category: {row[COL_CATEGORY]}
-- Risk Level: {row[COL_RISK]}
-- 3Y Return: {row[COL_3Y]}%
-- Expense Ratio: {row[COL_EXPENSE]}%
----
-"""
-            )
+        )
 
 # ------------------------------------------
 # Footer
 # ------------------------------------------
 st.caption(
-    "This system uses agent-based deterministic decision logic on structured financial data."
+    "This system generates recommendations using structured mutual fund data "
+    "and deterministic decision logic triggered by user intent."
 )
