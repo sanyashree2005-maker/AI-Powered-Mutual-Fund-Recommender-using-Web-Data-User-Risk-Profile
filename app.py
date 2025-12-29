@@ -32,7 +32,7 @@ def load_data():
 df = load_data()
 
 # ------------------------------------------
-# 🔍 Dynamic Column Detection (KEY FIX)
+# 🔍 Dynamic Column Detection
 # ------------------------------------------
 def find_col(keyword_list):
     for col in df.columns:
@@ -152,7 +152,7 @@ if "GROQ_API_KEY" in st.secrets:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 def explanation_agent(q, df_rec):
-    snapshot = df.to_string(index=False)
+    snapshot = df_rec.to_string(index=False)
 
     response = client.chat.completions.create(
         model="llama-3.1-8b-instant",
@@ -171,4 +171,13 @@ def explanation_agent(q, df_rec):
         ],
         temperature=0.3
     )
-    return response.
+    return response.choices[0].message.content
+
+if question:
+    if "recs" not in st.session_state:
+        st.warning("Generate recommendations first.")
+    elif client is None:
+        st.info("LLM temporarily unavailable. Recommendations are unaffected.")
+    else:
+        answer = explanation_agent(question, st.session_state["recs"])
+        st.write(answer)
