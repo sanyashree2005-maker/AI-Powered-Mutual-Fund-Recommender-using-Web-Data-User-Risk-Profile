@@ -1,87 +1,99 @@
 import streamlit as st
-from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from datetime import datetime
+from functools import lru_cache
 
 # =============================
-# CONFIG
+# PAGE CONFIG
 # =============================
 st.set_page_config(
     page_title="Agentic AI – Mutual Fund Market Intelligence",
     layout="wide"
 )
 
-llm = ChatOpenAI(
-    model="gpt-3.5-turbo",
+# =============================
+# LOAD GROQ LLM
+# =============================
+llm = ChatGroq(
+    model="mixtral-8x7b-32768",
     temperature=0
 )
 
 # =============================
-# SESSION MEMORY (FOR FOLLOW UPS)
+# SESSION MEMORY (FOLLOW-UPS)
 # =============================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 # =============================
+# SAFE LLM CALL (CACHED)
+# =============================
+@lru_cache(maxsize=100)
+def safe_llm_call(prompt: str) -> str:
+    try:
+        return llm.invoke(prompt).content
+    except Exception:
+        return "⚠️ The system is temporarily unavailable. Please try again."
+
+# =============================
 # AGENTS
 # =============================
-def intent_agent(query):
+def intent_agent(query: str) -> str:
     prompt = f"""
-    Classify the user's intent into one of:
-    - market
-    - recommendation
-    - explanation
-    - comparison
-    - exit
+    Classify the user intent into ONE word only:
+    market | recommendation | explanation | comparison | exit
 
     Query: {query}
     """
-    return llm.invoke(prompt).content.strip().lower()
+    return safe_llm_call(prompt).lower()
 
-def market_agent(query):
+def market_agent(query: str) -> str:
     prompt = f"""
-    You are a financial market intelligence assistant.
-    Answer using general market knowledge.
-    Avoid exact numbers unless confident.
+    You are a mutual fund market intelligence assistant.
+    Answer like a finance website.
+    Avoid exact numbers unless certain.
 
     Question: {query}
     """
-    return llm.invoke(prompt).content
+    return safe_llm_call(prompt)
 
-def recommendation_agent(query, profile):
+def recommendation_agent(query: str, profile: dict) -> str:
     prompt = f"""
-    User Profile:
-    Risk: {profile['risk']}
-    Horizon: {profile['horizon']}
-    Amount: {profile['amount']}
+    Investor Profile:
+    Risk Level: {profile['risk']}
+    Investment Horizon: {profile['horizon']}
+    Investment Amount: {profile['amount']}
 
     Task:
     Recommend suitable mutual fund categories and examples.
-    No guarantees, no financial advice disclaimer needed.
+    Explain briefly and clearly.
 
-    Question: {query}
+    User Question:
+    {query}
     """
-    return llm.invoke(prompt).content
+    return safe_llm_call(prompt)
 
-def explanation_agent(query, last_response):
+def explanation_agent(query: str, last_response: str) -> str:
     prompt = f"""
-    The user is asking a follow-up question.
-
-    Previous Answer:
+    Previous response:
     {last_response}
 
-    Follow-up Question:
+    Follow-up question:
     {query}
 
-    Explain clearly and simply.
+    Explain in simple terms.
     """
-    return llm.invoke(prompt).content
+    return safe_llm_call(prompt)
 
 # =============================
 # UI
 # =============================
 st.title("📈 Agentic AI – Mutual Fund Market Intelligence")
-st.caption(f"Market data refreshed: {datetime.now().strftime('%d %b %Y, %I:%M %p')}")
+st.caption(
+    f"Market insights refreshed: {datetime.now().strftime('%d %b %Y, %I:%M %p')}"
+)
 
+# Sidebar
 st.sidebar.header("Investor Profile")
 risk = st.sidebar.selectbox("Risk Profile", ["Low", "Medium", "High"])
 horizon = st.sidebar.selectbox("Investment Horizon", ["Short", "Medium", "Long"])
@@ -100,10 +112,7 @@ if st.button("Submit") and query:
     intent = intent_agent(query)
 
     if intent == "exit":
-        response = "Thank you! Let me know if you need anything else."
-
-    elif intent == "market":
-        response = market_agent(query)
+        response = "Thank you! Feel free to ask anytime."
 
     elif intent == "recommendation":
         response = recommendation_agent(query, profile)
