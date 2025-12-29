@@ -8,12 +8,12 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
 # ==============================
-# LLM (API key from secrets)
+# LLM
 # ==============================
 llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
 # ==============================
-# MARKET DATA (Near-Live)
+# MARKET DATA
 # ==============================
 @st.cache_data(ttl=1800)
 def fetch_market_data():
@@ -27,20 +27,18 @@ df = fetch_market_data()
 timestamp = datetime.now().strftime("%d %b %Y, %I:%M %p")
 
 # ==============================
-# VECTOR STORE (RAG)
+# VECTOR STORE
 # ==============================
 @st.cache_resource
-def build_vector_store(df):
+def build_vs(df):
     texts = df.apply(lambda r: str(r.to_dict()), axis=1).tolist()
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
-    return Chroma.from_texts(texts, embeddings)
+    emb = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    return Chroma.from_texts(texts, emb)
 
-vectorstore = build_vector_store(df)
+vs = build_vs(df)
 
 # ==============================
-# SHARED STATE
+# STATE
 # ==============================
 class AgentState(dict):
     pass
@@ -50,14 +48,14 @@ class AgentState(dict):
 # ==============================
 def intent_agent(state):
     prompt = f"""
-    Classify intent into exactly one:
-    recommendation, explanation, followup, market_overview, exit.
-    If unsure, choose recommendation.
+    Classify intent into one of:
+    recommendation, market_overview, explanation, followup, exit.
+    If unsure, use recommendation.
 
     Query: {state['query']}
     """
     intent = llm.invoke(prompt).content.strip().lower()
-    if intent not in ["recommendation","explanation","followup","market_overview","exit"]:
+    if intent not in ["recommendation","market_overview","explanation","followup","exit"]:
         intent = "recommendation"
     state["intent"] = intent
     return state
@@ -71,7 +69,7 @@ def profile_agent(state):
     return state
 
 def retrieve_agent(state):
-    docs = vectorstore.similarity_search(state["query"], k=3)
+    docs = vs.similarity_search(state["query"], k=3)
     state["context"] = [d.page_content for d in docs] if docs else []
     return state
 
@@ -84,40 +82,14 @@ def recommend_agent(state):
     {state['profile']}
     """
     state["response"] = llm.invoke(prompt).content
-    state["last_recommendation"] = state["response"]
-    return state
-
-def explain_agent(state):
-    prompt = f"""
-    Explain the recommendation using risk, horizon, and expense ratio.
-
-    Recommendation:
-    {state.get('last_recommendation')}
-    """
-    state["response"] = llm.invoke(prompt).content
-    state["last_explanation"] = state["response"]
-    return state
-
-def followup_agent(state):
-    prompt = f"""
-    Previous recommendation:
-    {state.get('last_recommendation')}
-
-    Previous explanation:
-    {state.get('last_explanation')}
-
-    Follow-up question:
-    {state['query']}
-    """
-    state["response"] = llm.invoke(prompt).content
     return state
 
 def market_agent(state):
     prompt = f"""
-    Based on latest publicly available market data:
+    Based on the latest publicly available market data:
     {state['context']}
 
-    Question:
+    Answer:
     {state['query']}
     """
     state["response"] = llm.invoke(prompt).content
@@ -125,14 +97,11 @@ def market_agent(state):
 
 def finalize_agent(state):
     if not state.get("response"):
-        state["response"] = (
-            "I could not generate a clear answer from the available data. "
-            "Please try rephrasing your question."
-        )
+        state["response"] = "No suitable answer could be generated."
     return state
 
 # ==============================
-# LANGGRAPH ORCHESTRATOR
+# LANGGRAPH (FIXED)
 # ==============================
 graph = StateGraph(AgentState)
 
@@ -140,8 +109,6 @@ graph.add_node("Intent", intent_agent)
 graph.add_node("Profile", profile_agent)
 graph.add_node("Retrieve", retrieve_agent)
 graph.add_node("Recommend", recommend_agent)
-graph.add_node("Explain", explain_agent)
-graph.add_node("FollowUp", followup_agent)
 graph.add_node("Market", market_agent)
 graph.add_node("Finalize", finalize_agent)
 
@@ -152,20 +119,23 @@ graph.add_conditional_edges(
     lambda s: s["intent"],
     {
         "recommendation": "Profile",
-        "explanation": "Explain",
-        "followup": "FollowUp",
         "market_overview": "Retrieve",
         "exit": "Finalize"
     }
 )
 
 graph.add_edge("Profile", "Retrieve")
-graph.add_edge("Retrieve", "Recommend")
-graph.add_edge("Retrieve", "Market")
+
+graph.add_conditional_edges(
+    "Retrieve",
+    lambda s: s["intent"],
+    {
+        "recommendation": "Recommend",
+        "market_overview": "Market"
+    }
+)
 
 graph.add_edge("Recommend", "Finalize")
-graph.add_edge("Explain", "Finalize")
-graph.add_edge("FollowUp", "Finalize")
 graph.add_edge("Market", "Finalize")
 graph.add_edge("Finalize", END)
 
@@ -187,19 +157,11 @@ amount = st.sidebar.number_input("Investment Amount", min_value=1000)
 query = st.text_input("Ask anything about mutual funds")
 
 if st.button("Submit") and query:
-    initial_state = {
+    result = app.invoke({
         "query": query,
         "risk": risk,
         "horizon": horizon,
-        "amount": amount,
-        "intent": None,
-        "profile": {},
-        "context": [],
-        "response": "",
-        "last_recommendation": "",
-        "last_explanation": ""
-    }
-
-    result = app.invoke(initial_state)
+        "amount": amount
+    })
     st.subheader("Agent Response")
-    st.write(result.get("response"))
+    st.write(result["response"])
