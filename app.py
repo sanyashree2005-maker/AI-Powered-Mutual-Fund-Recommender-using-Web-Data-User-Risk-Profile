@@ -1,11 +1,17 @@
 # ==========================================
 # Agentic AI – Mutual Fund Recommendation System
-# Dataset + Context-Aware Chatbot
+# CSV-Driven + Safe Explanation Agent
 # ==========================================
 
 import streamlit as st
 import pandas as pd
-from groq import Groq
+
+# Optional LLM
+try:
+    from groq import Groq
+    LLM_AVAILABLE = True
+except:
+    LLM_AVAILABLE = False
 
 # ------------------------------------------
 # Page Config
@@ -27,9 +33,9 @@ def load_data():
 df = load_data()
 
 # ------------------------------------------
-# Sidebar – Investor Profile
+# Sidebar – Controls
 # ------------------------------------------
-st.sidebar.header("Investor Profile")
+st.sidebar.header("Investor Preferences")
 
 risk_profile = st.sidebar.selectbox(
     "Risk Profile",
@@ -46,43 +52,12 @@ top_k = st.sidebar.slider(
     1, 10, 5
 )
 
-run_reco = st.sidebar.button("Get Recommendations")
+generate = st.sidebar.button("Get Recommendations")
 
 # ------------------------------------------
 # Risk Mapping
 # ------------------------------------------
-RISK_MAP = {
-    "Low": 1,
-    "Medium": 2,
-    "High": 3
-}
-
-# ------------------------------------------
-# Recommendation Engine
-# ------------------------------------------
-def recommend_funds(df, risk_profile, preference, top_k):
-    filtered = df.copy()
-
-    filtered = filtered[filtered["Risk Level"] <= RISK_MAP[risk_profile]]
-
-    if preference == "Growth":
-        filtered = filtered.sort_values(
-            by=["3Y Return (%)", "1Y Return (%)"],
-            ascending=False
-        )
-
-    elif preference == "Stability":
-        filtered = filtered.sort_values(
-            by=["Risk Level", "Expense Ratio (%)"],
-            ascending=[True, True]
-        )
-
-    elif preference == "Tax Saving":
-        filtered = filtered[
-            filtered["Category"].str.contains("ELSS", case=False, na=False)
-        ]
-
-    return filtered.head(top_k)
+RISK_MAP = {"Low": 1, "Medium": 2, "High": 3}
 
 # ------------------------------------------
 # Session State
@@ -91,11 +66,53 @@ if "recommendations" not in st.session_state:
     st.session_state.recommendations = None
 
 # ------------------------------------------
-# Generate Recommendations
+# Recommendation Agent (NO LLM)
 # ------------------------------------------
-if run_reco:
-    st.session_state.recommendations = recommend_funds(
+def recommendation_agent(df, risk, preference, k):
+    data = df.copy()
+
+    data = data[data["Risk Level"] <= RISK_MAP[risk]]
+
+    if preference == "Growth":
+        data = data.sort_values(
+            by=["3Y Return (%)", "1Y Return (%)"],
+            ascending=False
+        )
+
+    elif preference == "Stability":
+        data = data.sort_values(
+            by=["Risk Level", "Expense Ratio (%)"],
+            ascending=[True, True]
+        )
+
+    elif preference == "Tax Saving":
+        data = data[
+            data["Category"].str.contains("ELSS", case=False, na=False)
+        ]
+
+    return data.head(k)
+
+# ------------------------------------------
+# Generate Recommendations ONLY ON CLICK
+# ------------------------------------------
+if generate:
+    st.session_state.recommendations = recommendation_agent(
         df, risk_profile, preference, top_k
+    )
+
+# ------------------------------------------
+# Display Recommendation Variables
+# ------------------------------------------
+if st.session_state.recommendations is not None:
+    st.markdown("### 📊 Decision Variables Used")
+    st.write(
+        [
+            "Risk Level",
+            "Category",
+            "1Y Return (%)",
+            "3Y Return (%)",
+            "Expense Ratio (%)"
+        ]
     )
 
 # ------------------------------------------
@@ -105,7 +122,7 @@ if st.session_state.recommendations is not None:
 
     recos = st.session_state.recommendations
 
-    st.subheader(f"📌 Top {len(recos)} Recommended Mutual Funds")
+    st.markdown(f"### 📌 Top {len(recos)} Recommended Mutual Funds")
 
     for _, row in recos.iterrows():
         st.markdown(
@@ -121,42 +138,60 @@ if st.session_state.recommendations is not None:
         )
 
 # ------------------------------------------
-# Chatbot Section (Context-Aware)
+# Chatbot (Explanation Agent)
 # ------------------------------------------
 st.markdown("---")
 st.subheader("💬 Ask Follow-up Questions")
 
 user_query = st.text_input(
-    "Ask about recommendations (e.g. 'why is this fund recommended?')"
+    "Ask about recommendations or type 'recommend based on stability'"
 )
 
-if user_query and st.session_state.recommendations is not None:
+if user_query:
 
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    # Intent trigger
+    if "recommend" in user_query.lower():
+        st.session_state.recommendations = recommendation_agent(
+            df, risk_profile, preference, top_k
+        )
+        st.success("Recommendations updated based on your query.")
 
-    context = st.session_state.recommendations.to_string(index=False)
+    elif st.session_state.recommendations is None:
+        st.info("Please generate recommendations first.")
 
-    prompt = f"""
-You are a mutual fund assistant.
+    else:
+        if LLM_AVAILABLE:
+            try:
+                client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+                context = st.session_state.recommendations.to_string(index=False)
 
-ONLY answer using the following recommendation data.
-Do NOT invent funds.
-Do NOT give financial advice.
+                prompt = f"""
+You are an explanation agent.
 
-Recommendation Data:
+Use ONLY the data below.
+Do not recommend new funds.
+
+DATA:
 {context}
 
-User Question:
+Question:
 {user_query}
 """
 
-    response = client.chat.completions.create(
-        model="llama3-8b-8192",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3
-    )
+                response = client.chat.completions.create(
+                    model="llama3-8b-8192",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3
+                )
 
-    st.write(response.choices[0].message.content)
+                st.write(response.choices[0].message.content)
 
-elif user_query:
-    st.info("Please generate recommendations first.")
+            except:
+                st.warning(
+                    "LLM is temporarily unavailable. "
+                    "You can still view recommendations."
+                )
+        else:
+            st.warning(
+                "LLM not configured. Chatbot explanation is disabled."
+            )
