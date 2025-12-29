@@ -1,8 +1,8 @@
 streamlit
 langgraph
 langchain
+langchain-openai
 chromadb
 sentence-transformers
-openai
 pandas
 numpy
