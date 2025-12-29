@@ -43,11 +43,24 @@ preference = st.sidebar.multiselect(
     ["Stability", "Growth", "Tax Saving"],
     max_selections=1
 )
-
 preference = preference[0] if preference else None
 
+# 🔢 TOP-K CONTROL (FIX FOR “TOP 2” ISSUE)
+top_k = st.sidebar.slider(
+    "Number of recommendations",
+    min_value=1,
+    max_value=10,
+    value=5
+)
+
+# 🧠 OPTIONAL LLM EXPLANATION
+use_llm_explanation = st.sidebar.checkbox(
+    "Enable AI Explanation",
+    value=False
+)
+
 # -------------------------------------------------
-# PREFERENCE FILTERING (CORE RECOMMENDATION LOGIC)
+# CORE RECOMMENDATION LOGIC
 # -------------------------------------------------
 def apply_preference_filter(df, preference):
     if preference == "Stability":
@@ -73,7 +86,7 @@ def apply_preference_filter(df, preference):
 user_query = st.chat_input("Ask anything about mutual funds...")
 
 # -------------------------------------------------
-# LLM (EXPLANATION ONLY – OPTIONAL LAYER)
+# LLM (EXPLANATION ONLY – OPTIONAL)
 # -------------------------------------------------
 llm = ChatGroq(
     api_key=os.environ.get("GROQ_API_KEY"),
@@ -92,7 +105,7 @@ if user_query and preference:
         st.error("No mutual funds match the selected preference.")
         st.stop()
 
-    top_funds = filtered_df.head(5)[[
+    top_funds = filtered_df.head(top_k)[[
         "scheme_name",
         "category",
         "risk_level",
@@ -105,7 +118,7 @@ if user_query and preference:
     # -------------------------
     # DISPLAY RECOMMENDATIONS
     # -------------------------
-    st.subheader("📌 Recommended Mutual Funds")
+    st.subheader(f"📌 Top {top_k} Recommended Mutual Funds")
 
     for _, row in top_funds.iterrows():
         st.markdown(
@@ -120,17 +133,18 @@ if user_query and preference:
         )
 
     # -------------------------
-    # SAFE LLM EXPLANATION
+    # OPTIONAL LLM EXPLANATION
     # -------------------------
-    context = top_funds[[
-        "scheme_name",
-        "category",
-        "risk_level",
-        "returns_3yr",
-        "expense_ratio"
-    ]].to_string(index=False)
+    if use_llm_explanation:
+        context = top_funds[[
+            "scheme_name",
+            "category",
+            "risk_level",
+            "returns_3yr",
+            "expense_ratio"
+        ]].to_string(index=False)
 
-    explanation_prompt = f"""
+        explanation_prompt = f"""
 Using ONLY the data below, explain briefly why these funds match the user's profile.
 
 User Profile:
@@ -141,22 +155,22 @@ User Profile:
 Rules:
 - No new fund names
 - No predictions
-- No advice
+- No investment advice
 
 Data:
 {context}
 """
 
-    try:
-        explanation = llm.invoke(explanation_prompt)
-        st.subheader("🧠 Explanation")
-        st.write(explanation.content)
-    except Exception:
-        st.subheader("🧠 Explanation")
-        st.info(
-            "Explanation is temporarily unavailable due to LLM limits. "
-            "The recommendations above are generated directly from the dataset."
-        )
+        try:
+            explanation = llm.invoke(explanation_prompt)
+            st.subheader("🧠 Explanation")
+            st.write(explanation.content)
+        except Exception:
+            st.subheader("🧠 Explanation")
+            st.info(
+                "Explanation is temporarily unavailable due to LLM limits. "
+                "The recommendations above are generated directly from the dataset."
+            )
 
 elif user_query and not preference:
     st.warning("Please select one preference: Stability, Growth, or Tax Saving.")
