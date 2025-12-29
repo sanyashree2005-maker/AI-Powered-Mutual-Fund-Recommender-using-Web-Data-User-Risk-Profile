@@ -1,5 +1,5 @@
 # =========================================================
-# Agentic AI – Mutual Fund Recommender (FINAL FIXED VERSION)
+# Agentic AI – Mutual Fund Recommender 
 # =========================================================
 
 import streamlit as st
@@ -20,7 +20,7 @@ from langchain_community.vectorstores import Chroma
 st.set_page_config(page_title="Agentic AI – Mutual Fund Recommender", layout="wide")
 st.title("🤖 Agentic AI – Mutual Fund Recommender")
 
-# ------------------ LLM (NO STREAMING) ------------------
+# ------------------ LLM (STREAMING DISABLED) ------------------
 llm = ChatGroq(
     api_key=st.secrets["GROQ_API_KEY"],
     model="llama3-8b-8192",
@@ -83,8 +83,10 @@ def scrape_funds():
         if len(cols) >= 5:
             docs.append(
                 Document(
-                    page_content=f"Fund {cols[0]}, Category {cols[1]}, "
-                                 f"1Y {cols[2]}, 3Y {cols[3]}, Risk {cols[4]}"
+                    page_content=(
+                        f"Fund {cols[0]}, Category {cols[1]}, "
+                        f"1Y Return {cols[2]}, 3Y Return {cols[3]}, Risk {cols[4]}"
+                    )
                 )
             )
     return docs
@@ -107,7 +109,7 @@ def retrieval_agent(state: AgentState):
 
 def recommendation_agent(state: AgentState):
     if not state.get("documents"):
-        state["response"] = "No sufficient mutual fund data available from public sources."
+        state["response"] = "Relevant mutual fund data is not available from current public sources."
         return state
 
     context = "\n".join(d.page_content for d in state["documents"])
@@ -196,7 +198,8 @@ if user_input and user_input.strip():
         "response": ""
     }
 
-    result = app_graph.invoke(state)
+    # 🔴 FINAL FIX: disable LangGraph streaming HERE
+    result = app_graph.invoke(state, config={"stream": False})
 
     st.session_state.chat.extend([
         HumanMessage(content=user_input),
@@ -204,6 +207,7 @@ if user_input and user_input.strip():
     ])
 
 for msg in st.session_state.chat:
-    st.chat_message("user").write(msg.content)
-    if isinstance(msg, AIMessage):
+    if isinstance(msg, HumanMessage):
+        st.chat_message("user").write(msg.content)
+    else:
         st.chat_message("assistant").write(msg.content)
