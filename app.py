@@ -1,6 +1,6 @@
 # ==========================================
 # Agentic AI – Mutual Fund Recommendation System
-# Dataset + Tool-Orchestrated LLM Chat Agent
+# Deterministic Recommender + LLM Q&A Agent
 # ==========================================
 
 import streamlit as st
@@ -8,7 +8,7 @@ import pandas as pd
 from groq import Groq
 
 # ------------------------------------------
-# Page Config
+# Page Configuration
 # ------------------------------------------
 st.set_page_config(
     page_title="Agentic AI – Mutual Fund Recommendation System",
@@ -17,15 +17,34 @@ st.set_page_config(
 
 st.title("🤖 Agentic AI – Mutual Fund Recommendation System")
 st.caption(
-    "Deterministic recommendations from CSV + LLM-powered follow-up chatbot"
+    "Recommendations are deterministic. The agent only explains and answers follow-ups."
 )
 
 # ------------------------------------------
-# Load Groq Client (SAFE)
+# Load CSV (FIXED DATASET)
 # ------------------------------------------
-client = None
-if "GROQ_API_KEY" in st.secrets:
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+@st.cache_data
+def load_data():
+    return pd.read_csv("Mutual Funds Data.csv")
+
+df = load_data()
+
+# Normalize columns
+df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
+REQUIRED_COLS = {
+    "fund_name",
+    "category",
+    "risk_level",
+    "1y_return",
+    "3y_return",
+    "expense_ratio"
+}
+
+missing = REQUIRED_COLS - set(df.columns)
+if missing:
+    st.error(f"Dataset missing required columns: {missing}")
+    st.stop()
 
 # ------------------------------------------
 # Sidebar – Investor Preferences
@@ -44,52 +63,17 @@ preference = st.sidebar.selectbox(
 
 top_k = st.sidebar.slider(
     "Number of Recommendations",
-    min_value=1,
-    max_value=10,
-    value=5
+    1, 10, 5
 )
 
-run_button = st.sidebar.button("Get Recommendations")
-
-# ------------------------------------------
-# Upload Dataset
-# ------------------------------------------
-uploaded_file = st.file_uploader(
-    "Upload Mutual Fund CSV",
-    type=["csv"]
-)
-
-if uploaded_file is None:
-    st.info("👈 Upload a CSV file to begin.")
-    st.stop()
-
-df = pd.read_csv(uploaded_file)
-
-# ------------------------------------------
-# Column Normalization (VERY IMPORTANT)
-# ------------------------------------------
-df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-
-REQUIRED_COLS = {
-    "fund_name",
-    "category",
-    "risk_level",
-    "1y_return",
-    "3y_return",
-    "expense_ratio"
-}
-
-missing = REQUIRED_COLS - set(df.columns)
-if missing:
-    st.error(f"Missing required columns: {missing}")
-    st.stop()
+get_reco = st.sidebar.button("Get Recommendations")
 
 # ------------------------------------------
 # Deterministic Recommendation Agent
 # ------------------------------------------
 RISK_MAP = {"Low": 1, "Medium": 2, "High": 3}
 
-def recommendation_agent(data):
+def recommendation_agent(data: pd.DataFrame):
     filtered = data.copy()
 
     # Risk filter
@@ -115,26 +99,23 @@ def recommendation_agent(data):
             filtered["category"].str.contains("elss", case=False, na=False)
         ]
 
-    if filtered.empty:
-        return pd.DataFrame()
-
     return filtered.head(top_k)
 
 # ------------------------------------------
-# Run Recommendation ONLY on Button Click
+# Generate Recommendations ONLY on click
 # ------------------------------------------
-if run_button:
-    recommendations = recommendation_agent(df)
+if get_reco:
+    recs = recommendation_agent(df)
 
-    if recommendations.empty:
+    if recs.empty:
         st.warning("No funds matched your criteria.")
         st.stop()
 
-    st.session_state["recommendations"] = recommendations
+    st.session_state["recommendations"] = recs
 
-    st.subheader(f"📌 Top {len(recommendations)} Recommended Mutual Funds")
+    st.subheader(f"📌 Top {len(recs)} Recommended Mutual Funds")
 
-    for _, row in recommendations.iterrows():
+    for _, row in recs.iterrows():
         st.markdown(
             f"""
 **{row['fund_name']}**
@@ -148,7 +129,7 @@ if run_button:
         )
 
 # ------------------------------------------
-# Chatbot Agent (LLM – SAFE, OPTIONAL)
+# LLM CHAT AGENT (EXPLANATION ONLY)
 # ------------------------------------------
 st.markdown("---")
 st.subheader("💬 Chat with the Agent")
@@ -157,28 +138,31 @@ user_question = st.text_input(
     "Ask follow-ups (e.g. why stability?, compare first two funds)"
 )
 
-def chat_agent(question, rec_df):
-    if client is None:
-        return (
-            "LLM is currently unavailable.\n\n"
-            "Recommendations are generated deterministically "
-            "from risk level, returns, and expense ratio."
-        )
+# Load Groq client ONLY if key exists
+client = None
+if "GROQ_API_KEY" in st.secrets:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
+def explanation_agent(question: str, rec_df: pd.DataFrame):
+    """
+    LLM is ONLY allowed to explain from the recommended funds.
+    """
     snapshot = rec_df.to_string(index=False)
 
     system_prompt = """
 You are a mutual fund explanation agent.
-Answer ONLY from the provided data.
-Do NOT hallucinate.
-Be concise and factual.
+Rules:
+- Answer ONLY using the provided data
+- Do NOT recommend new funds
+- Do NOT hallucinate metrics
+- Be factual and concise
 """
 
     user_prompt = f"""
 User question:
 {question}
 
-Current recommended funds:
+Recommended funds:
 {snapshot}
 """
 
@@ -193,13 +177,18 @@ Current recommended funds:
 
     return response.choices[0].message.content
 
-
 if user_question:
     if "recommendations" not in st.session_state:
         st.warning("Please generate recommendations first.")
+    elif client is None:
+        st.info(
+            "LLM not configured. "
+            "Recommendations are generated using dataset variables:\n"
+            "Risk Level, Returns, Expense Ratio."
+        )
     else:
-        with st.spinner("Agent thinking..."):
-            answer = chat_agent(
+        with st.spinner("Agent answering..."):
+            answer = explanation_agent(
                 user_question,
                 st.session_state["recommendations"]
             )
