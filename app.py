@@ -1,6 +1,6 @@
 # ==========================================
 # Agentic AI – Mutual Fund Recommendation System
-# Deterministic Recommender + LLM Q&A Agent
+# Deterministic Reco + LLM Explanation Agent
 # ==========================================
 
 import streamlit as st
@@ -8,7 +8,7 @@ import pandas as pd
 from groq import Groq
 
 # ------------------------------------------
-# Page Configuration
+# Page Config
 # ------------------------------------------
 st.set_page_config(
     page_title="Agentic AI – Mutual Fund Recommendation System",
@@ -21,7 +21,7 @@ st.caption(
 )
 
 # ------------------------------------------
-# Load CSV (FIXED DATASET)
+# Load CSV (FIXED FILE)
 # ------------------------------------------
 @st.cache_data
 def load_data():
@@ -29,8 +29,24 @@ def load_data():
 
 df = load_data()
 
-# Normalize columns
-df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+# ------------------------------------------
+# Column Normalization & Mapping (CRITICAL)
+# ------------------------------------------
+df.columns = [c.strip().lower() for c in df.columns]
+
+COLUMN_MAP = {
+    "scheme name": "fund_name",
+    "fund name": "fund_name",
+    "1 yr return (%)": "1y_return",
+    "3 yr return (%)": "3y_return",
+    "expense ratio (%)": "expense_ratio",
+    "risk level": "risk_level",
+    "category": "category",
+}
+
+for original, standardized in COLUMN_MAP.items():
+    if original in df.columns:
+        df.rename(columns={original: standardized}, inplace=True)
 
 REQUIRED_COLS = {
     "fund_name",
@@ -38,7 +54,7 @@ REQUIRED_COLS = {
     "risk_level",
     "1y_return",
     "3y_return",
-    "expense_ratio"
+    "expense_ratio",
 }
 
 missing = REQUIRED_COLS - set(df.columns)
@@ -76,7 +92,7 @@ RISK_MAP = {"Low": 1, "Medium": 2, "High": 3}
 def recommendation_agent(data: pd.DataFrame):
     filtered = data.copy()
 
-    # Risk filter
+    # Risk filtering
     filtered = filtered[
         filtered["risk_level"] <= RISK_MAP[risk_profile]
     ]
@@ -102,7 +118,7 @@ def recommendation_agent(data: pd.DataFrame):
     return filtered.head(top_k)
 
 # ------------------------------------------
-# Generate Recommendations ONLY on click
+# Run Recommendations ONLY on Click
 # ------------------------------------------
 if get_reco:
     recs = recommendation_agent(df)
@@ -129,7 +145,7 @@ if get_reco:
         )
 
 # ------------------------------------------
-# LLM CHAT AGENT (EXPLANATION ONLY)
+# Chatbot (LLM Explanation Agent ONLY)
 # ------------------------------------------
 st.markdown("---")
 st.subheader("💬 Chat with the Agent")
@@ -138,24 +154,20 @@ user_question = st.text_input(
     "Ask follow-ups (e.g. why stability?, compare first two funds)"
 )
 
-# Load Groq client ONLY if key exists
 client = None
 if "GROQ_API_KEY" in st.secrets:
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 def explanation_agent(question: str, rec_df: pd.DataFrame):
-    """
-    LLM is ONLY allowed to explain from the recommended funds.
-    """
     snapshot = rec_df.to_string(index=False)
 
     system_prompt = """
 You are a mutual fund explanation agent.
 Rules:
-- Answer ONLY using the provided data
+- Use ONLY the provided data
 - Do NOT recommend new funds
-- Do NOT hallucinate metrics
-- Be factual and concise
+- Do NOT hallucinate
+- Be clear and factual
 """
 
     user_prompt = f"""
@@ -183,8 +195,7 @@ if user_question:
     elif client is None:
         st.info(
             "LLM not configured. "
-            "Recommendations are generated using dataset variables:\n"
-            "Risk Level, Returns, Expense Ratio."
+            "Recommendations are based on Risk Level, Returns, and Expense Ratio."
         )
     else:
         with st.spinner("Agent answering..."):
