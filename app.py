@@ -1,6 +1,6 @@
 # ============================================================
 # AGENTIC AI – NEAR-LIVE MUTUAL FUND INTELLIGENCE SYSTEM
-# LangGraph + API-style Market Data + RAG + Follow-Up Explanations
+# LangGraph + RAG + Follow-Up Explanations
 # ============================================================
 
 import streamlit as st
@@ -13,14 +13,14 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
 # ============================================================
-# LLM CONFIG (API key loaded from Streamlit Secrets)
+# LLM CONFIG (API KEY FROM STREAMLIT SECRETS)
 # ============================================================
 llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
 # ============================================================
-# 1️⃣ MARKET DATA AGENT (PUBLIC API – NEAR-LIVE)
+# MARKET DATA AGENT (NEAR-LIVE – API STYLE)
 # ============================================================
-@st.cache_data(ttl=1800)  # refresh every 30 minutes
+@st.cache_data(ttl=1800)
 def fetch_market_data():
     return pd.DataFrame([
         {
@@ -56,7 +56,7 @@ df = fetch_market_data()
 last_updated = datetime.now().strftime("%d %b %Y, %I:%M %p")
 
 # ============================================================
-# 2️⃣ VECTOR STORE (RAG CORE)
+# VECTOR STORE (RAG CORE)
 # ============================================================
 @st.cache_resource
 def build_vector_store(df):
@@ -69,13 +69,13 @@ def build_vector_store(df):
 vectorstore = build_vector_store(df)
 
 # ============================================================
-# AGENT STATE (SHARED MEMORY)
+# AGENT STATE
 # ============================================================
 class AgentState(dict):
     pass
 
 # ============================================================
-# 3️⃣ INTENT CLASSIFICATION AGENT (SAFE NORMALIZATION)
+# INTENT CLASSIFICATION AGENT (SAFE)
 # ============================================================
 def intent_agent(state):
     prompt = f"""
@@ -88,22 +88,20 @@ def intent_agent(state):
     """
     intent = llm.invoke(prompt).content.lower().strip()
 
-    allowed = [
+    if intent not in [
         "recommendation",
         "explanation",
         "followup",
         "market_overview",
         "exit"
-    ]
-
-    if intent not in allowed:
+    ]:
         intent = "recommendation"
 
     state["intent"] = intent
     return state
 
 # ============================================================
-# 4️⃣ USER PROFILING AGENT
+# USER PROFILING AGENT
 # ============================================================
 def profiling_agent(state):
     state["profile"] = {
@@ -114,7 +112,7 @@ def profiling_agent(state):
     return state
 
 # ============================================================
-# 5️⃣ RETRIEVAL AGENT (RAG)
+# RETRIEVAL AGENT (RAG)
 # ============================================================
 def retrieval_agent(state):
     docs = vectorstore.similarity_search(state["query"], k=3)
@@ -122,7 +120,7 @@ def retrieval_agent(state):
     return state
 
 # ============================================================
-# 6️⃣ RECOMMENDATION AGENT
+# RECOMMENDATION AGENT
 # ============================================================
 def recommendation_agent(state):
     prompt = f"""
@@ -132,13 +130,12 @@ def recommendation_agent(state):
     Recommend suitable mutual funds for:
     {state['profile']}
     """
-    response = llm.invoke(prompt).content
-    state["response"] = response
-    state["last_recommendation"] = response
+    state["response"] = llm.invoke(prompt).content
+    state["last_recommendation"] = state["response"]
     return state
 
 # ============================================================
-# 7️⃣ EXPLANATION AGENT
+# EXPLANATION AGENT
 # ============================================================
 def explanation_agent(state):
     prompt = f"""
@@ -151,46 +148,43 @@ def explanation_agent(state):
     Market data:
     {state['context']}
     """
-    explanation = llm.invoke(prompt).content
-    state["response"] = explanation
-    state["last_explanation"] = explanation
+    state["response"] = llm.invoke(prompt).content
+    state["last_explanation"] = state["response"]
     return state
 
 # ============================================================
-# 8️⃣ FOLLOW-UP EXPLANATION AGENT
+# FOLLOW-UP EXPLANATION AGENT
 # ============================================================
 def followup_explanation_agent(state):
     prompt = f"""
-    You are answering a follow-up question.
-
     Previous recommendation:
     {state.get('last_recommendation')}
 
     Previous explanation:
     {state.get('last_explanation')}
 
-    User follow-up question:
+    Follow-up question:
     {state['query']}
     """
     state["response"] = llm.invoke(prompt).content
     return state
 
 # ============================================================
-# 9️⃣ MARKET OVERVIEW AGENT
+# MARKET OVERVIEW AGENT
 # ============================================================
 def market_overview_agent(state):
     prompt = f"""
-    Based on the latest available market data:
+    Based on the latest publicly available market data:
     {state['context']}
 
-    Answer the user's market-related question:
+    Answer:
     {state['query']}
     """
     state["response"] = llm.invoke(prompt).content
     return state
 
 # ============================================================
-# 🔀 LANGGRAPH ORCHESTRATOR
+# LANGGRAPH ORCHESTRATOR (FINAL FIXED)
 # ============================================================
 graph = StateGraph(AgentState)
 
@@ -218,6 +212,7 @@ graph.add_conditional_edges(
 
 graph.add_edge("Profile", "Retrieve")
 graph.add_edge("Retrieve", "Recommend")
+graph.add_edge("Retrieve", "MarketOverview")
 graph.add_edge("Recommend", END)
 graph.add_edge("Explain", END)
 graph.add_edge("FollowUpExplain", END)
@@ -226,7 +221,7 @@ graph.add_edge("MarketOverview", END)
 app = graph.compile()
 
 # ============================================================
-# STREAMLIT UI (IMPORTANT: ONLY DISPLAY invoke OUTPUT)
+# STREAMLIT UI
 # ============================================================
 st.set_page_config(
     page_title="Agentic AI – Mutual Fund Intelligence",
@@ -243,7 +238,7 @@ amount = st.sidebar.number_input("Investment Amount", min_value=1000)
 
 query = st.text_input("Ask anything about mutual funds")
 
-if st.button("Submit"):
+if st.button("Submit") and query:
     state = {
         "query": query,
         "risk": risk,
