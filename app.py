@@ -1,13 +1,14 @@
 # ==========================================
 # Agentic AI – Mutual Fund Recommendation System
-# Dataset-Driven | Button-Triggered | Stable
+# Dataset + Context-Aware Chatbot
 # ==========================================
 
 import streamlit as st
 import pandas as pd
+from groq import Groq
 
 # ------------------------------------------
-# Page Configuration
+# Page Config
 # ------------------------------------------
 st.set_page_config(
     page_title="Agentic AI – Mutual Fund Recommendation System",
@@ -26,16 +27,6 @@ def load_data():
 df = load_data()
 
 # ------------------------------------------
-# Column Mapping (VERY IMPORTANT)
-# ------------------------------------------
-COL_FUND = "Fund Name"
-COL_CATEGORY = "Category"
-COL_RISK = "Risk Level"
-COL_1Y = "1Y Return (%)"
-COL_3Y = "3Y Return (%)"
-COL_EXPENSE = "Expense Ratio (%)"
-
-# ------------------------------------------
 # Sidebar – Investor Profile
 # ------------------------------------------
 st.sidebar.header("Investor Profile")
@@ -43,11 +34,6 @@ st.sidebar.header("Investor Profile")
 risk_profile = st.sidebar.selectbox(
     "Risk Profile",
     ["Low", "Medium", "High"]
-)
-
-investment_horizon = st.sidebar.selectbox(
-    "Investment Horizon",
-    ["Short", "Medium", "Long"]
 )
 
 preference = st.sidebar.selectbox(
@@ -60,88 +46,117 @@ top_k = st.sidebar.slider(
     1, 10, 5
 )
 
-generate = st.sidebar.button("🔍 Get Recommendations")
+run_reco = st.sidebar.button("Get Recommendations")
 
 # ------------------------------------------
 # Risk Mapping
 # ------------------------------------------
 RISK_MAP = {
-    "Low": 2,
-    "Medium": 3,
-    "High": 5
+    "Low": 1,
+    "Medium": 2,
+    "High": 3
 }
 
 # ------------------------------------------
-# Show Decision Variables
+# Recommendation Engine
 # ------------------------------------------
-with st.expander("📊 Decision Variables Used"):
-    st.write("""
-- Risk Level  
-- 1-Year Return  
-- 3-Year Return  
-- Expense Ratio  
-- Fund Category  
-- User Risk Profile  
-- User Preference  
-""")
-
-# ------------------------------------------
-# Recommendation Logic (ONLY ON CLICK)
-# ------------------------------------------
-if generate:
-
+def recommend_funds(df, risk_profile, preference, top_k):
     filtered = df.copy()
 
-    # Risk-based filtering
-    filtered = filtered[filtered[COL_RISK] <= RISK_MAP[risk_profile]]
+    filtered = filtered[filtered["Risk Level"] <= RISK_MAP[risk_profile]]
 
-    # Preference-based logic
-    if preference == "Stability":
+    if preference == "Growth":
         filtered = filtered.sort_values(
-            by=[COL_RISK, COL_EXPENSE],
-            ascending=[True, True]
+            by=["3Y Return (%)", "1Y Return (%)"],
+            ascending=False
         )
 
-    elif preference == "Growth":
+    elif preference == "Stability":
         filtered = filtered.sort_values(
-            by=[COL_3Y, COL_1Y],
-            ascending=False
+            by=["Risk Level", "Expense Ratio (%)"],
+            ascending=[True, True]
         )
 
     elif preference == "Tax Saving":
         filtered = filtered[
-            filtered[COL_CATEGORY].str.contains("ELSS", case=False, na=False)
+            filtered["Category"].str.contains("ELSS", case=False, na=False)
         ]
 
-    # Fallback
-    if filtered.empty:
-        st.warning("No mutual funds match the selected criteria.")
-        st.stop()
+    return filtered.head(top_k)
 
-    top_funds = filtered.head(top_k)
+# ------------------------------------------
+# Session State
+# ------------------------------------------
+if "recommendations" not in st.session_state:
+    st.session_state.recommendations = None
 
-    # ------------------------------------------
-    # Display Results
-    # ------------------------------------------
-    st.subheader(f"📌 Top {len(top_funds)} Recommended Mutual Funds")
+# ------------------------------------------
+# Generate Recommendations
+# ------------------------------------------
+if run_reco:
+    st.session_state.recommendations = recommend_funds(
+        df, risk_profile, preference, top_k
+    )
 
-    for _, row in top_funds.iterrows():
+# ------------------------------------------
+# Display Recommendations
+# ------------------------------------------
+if st.session_state.recommendations is not None:
+
+    recos = st.session_state.recommendations
+
+    st.subheader(f"📌 Top {len(recos)} Recommended Mutual Funds")
+
+    for _, row in recos.iterrows():
         st.markdown(
             f"""
-**{row[COL_FUND]}**
-- Category: {row[COL_CATEGORY]}
-- Risk Level: {row[COL_RISK]}
-- 1Y Return: {row[COL_1Y]}%
-- 3Y Return: {row[COL_3Y]}%
-- Expense Ratio: {row[COL_EXPENSE]}%
+**{row['Fund Name']}**
+- Category: {row['Category']}
+- Risk Level: {row['Risk Level']}
+- 1Y Return: {row['1Y Return (%)']}%
+- 3Y Return: {row['3Y Return (%)']}%
+- Expense Ratio: {row['Expense Ratio (%)']}%
 ---
 """
         )
 
 # ------------------------------------------
-# Footer
+# Chatbot Section (Context-Aware)
 # ------------------------------------------
-st.caption(
-    "This system generates recommendations using structured mutual fund data "
-    "and deterministic decision logic triggered by user intent."
+st.markdown("---")
+st.subheader("💬 Ask Follow-up Questions")
+
+user_query = st.text_input(
+    "Ask about recommendations (e.g. 'why is this fund recommended?')"
 )
+
+if user_query and st.session_state.recommendations is not None:
+
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+    context = st.session_state.recommendations.to_string(index=False)
+
+    prompt = f"""
+You are a mutual fund assistant.
+
+ONLY answer using the following recommendation data.
+Do NOT invent funds.
+Do NOT give financial advice.
+
+Recommendation Data:
+{context}
+
+User Question:
+{user_query}
+"""
+
+    response = client.chat.completions.create(
+        model="llama3-8b-8192",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3
+    )
+
+    st.write(response.choices[0].message.content)
+
+elif user_query:
+    st.info("Please generate recommendations first.")
