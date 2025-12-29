@@ -1,5 +1,5 @@
 # =========================================================
-# Agentic AI – Mutual Fund Recommender (FINAL DEPLOYMENT)
+# Agentic AI – Mutual Fund Recommender (FINAL VERSION)
 # =========================================================
 
 import streamlit as st
@@ -17,15 +17,18 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
 # ------------------ PAGE CONFIG ------------------
-st.set_page_config(page_title="Agentic AI – Mutual Fund Recommender", layout="wide")
+st.set_page_config(
+    page_title="Agentic AI – Mutual Fund Recommender",
+    layout="wide"
+)
 st.title("🤖 Agentic AI – Mutual Fund Recommender")
 
-# ------------------ LLM (STREAMING DISABLED) ------------------
+# ------------------ LLM (STREAMING DISABLED HERE ONLY) ------------------
 llm = ChatGroq(
     api_key=st.secrets["GROQ_API_KEY"],
     model="llama3-8b-8192",
     temperature=0.2,
-    streaming=False,   # 🔴 CRITICAL FIX
+    streaming=False  # ✅ CRITICAL & CORRECT FIX
 )
 
 embeddings = HuggingFaceEmbeddings(
@@ -53,8 +56,10 @@ def intent_agent(state: AgentState):
         return state
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system",
-         "Return ONLY one word: recommendation, comparison, explanation, market, exit"),
+        (
+            "system",
+            "Return ONLY one word: recommendation, comparison, explanation, market, exit"
+        ),
         ("human", last_msg)
     ])
 
@@ -79,13 +84,15 @@ def scrape_funds():
 
     docs = []
     rows = soup.select("table tbody tr")[:15]
-    for r in rows:
-        cols = [c.get_text(strip=True) for c in r.find_all("td")]
+    for row in rows:
+        cols = [c.get_text(strip=True) for c in row.find_all("td")]
         if len(cols) >= 5:
             docs.append(
                 Document(
-                    page_content=f"Fund {cols[0]}, Category {cols[1]}, "
-                                 f"1Y {cols[2]}, 3Y {cols[3]}, Risk {cols[4]}"
+                    page_content=(
+                        f"Fund {cols[0]}, Category {cols[1]}, "
+                        f"1Y Return {cols[2]}, 3Y Return {cols[3]}, Risk {cols[4]}"
+                    )
                 )
             )
     return docs
@@ -128,7 +135,7 @@ def recommendation_agent(state: AgentState):
 
 def explanation_agent(state: AgentState):
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Explain recommendations clearly and safely."),
+        ("system", "Explain the recommendation clearly and safely."),
         ("human", state["response"])
     ])
     result = llm.invoke(prompt)
@@ -143,14 +150,14 @@ def comparison_agent(state: AgentState):
 
     context = "\n".join(d.page_content for d in state["documents"])
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Compare funds strictly using given data."),
+        ("system", "Compare mutual funds using only the given data."),
         ("human", context)
     ])
     result = llm.invoke(prompt)
     state["response"] = result.content
     return state
 
-# ------------------ LANGGRAPH ------------------
+# ------------------ LANGGRAPH ORCHESTRATION ------------------
 graph = StateGraph(AgentState)
 
 graph.add_node("intent", intent_agent)
@@ -173,12 +180,17 @@ graph.add_edge("recommend", "explain")
 graph.add_edge("explain", END)
 graph.add_edge("compare", END)
 
-app_graph = graph.compile(stream=False)  # 🔴 CRITICAL FIX
+# ✅ CORRECT: no unsupported arguments
+app_graph = graph.compile()
 
-# ------------------ UI ------------------
+# ------------------ STREAMLIT UI ------------------
 with st.sidebar:
-    st.session_state["risk"] = st.selectbox("Risk Profile", ["Low", "Medium", "High"])
-    st.session_state["horizon"] = st.selectbox("Investment Horizon", ["Short", "Medium", "Long"])
+    st.session_state["risk"] = st.selectbox(
+        "Risk Profile", ["Low", "Medium", "High"]
+    )
+    st.session_state["horizon"] = st.selectbox(
+        "Investment Horizon", ["Short", "Medium", "Long"]
+    )
     st.session_state["preferences"] = st.multiselect(
         "Preferences", ["Growth", "Stability", "Tax Saving"]
     )
