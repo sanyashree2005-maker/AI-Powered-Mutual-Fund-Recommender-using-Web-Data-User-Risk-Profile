@@ -26,13 +26,13 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 # =============================
-# SAFE LLM CALL (CACHED)
+# SAFE LLM CALL (NO CRASH)
 # =============================
 @lru_cache(maxsize=100)
 def safe_llm_call(prompt: str) -> str:
     try:
         return llm.invoke(prompt).content
-    except Exception:
+    except Exception as e:
         return "⚠️ The system is temporarily unavailable. Please try again."
 
 # =============================
@@ -40,7 +40,7 @@ def safe_llm_call(prompt: str) -> str:
 # =============================
 def intent_agent(query: str) -> str:
     prompt = f"""
-    Classify the user intent into ONE word only:
+    Classify the user's intent into ONE word only:
     market | recommendation | explanation | comparison | exit
 
     Query: {query}
@@ -50,23 +50,24 @@ def intent_agent(query: str) -> str:
 def market_agent(query: str) -> str:
     prompt = f"""
     You are a mutual fund market intelligence assistant.
-    Answer like a finance website.
+    Respond like a finance website.
     Avoid exact numbers unless certain.
 
-    Question: {query}
+    Question:
+    {query}
     """
     return safe_llm_call(prompt)
 
 def recommendation_agent(query: str, profile: dict) -> str:
     prompt = f"""
     Investor Profile:
-    Risk Level: {profile['risk']}
-    Investment Horizon: {profile['horizon']}
-    Investment Amount: {profile['amount']}
+    - Risk Level: {profile['risk']}
+    - Investment Horizon: {profile['horizon']}
+    - Investment Amount: {profile['amount']}
 
     Task:
     Recommend suitable mutual fund categories and examples.
-    Explain briefly and clearly.
+    Provide a short explanation.
 
     User Question:
     {query}
@@ -81,7 +82,7 @@ def explanation_agent(query: str, last_response: str) -> str:
     Follow-up question:
     {query}
 
-    Explain in simple terms.
+    Explain clearly in simple terms.
     """
     return safe_llm_call(prompt)
 
@@ -93,7 +94,7 @@ st.caption(
     f"Market insights refreshed: {datetime.now().strftime('%d %b %Y, %I:%M %p')}"
 )
 
-# Sidebar
+# Sidebar – Investor Profile
 st.sidebar.header("Investor Profile")
 risk = st.sidebar.selectbox("Risk Profile", ["Low", "Medium", "High"])
 horizon = st.sidebar.selectbox("Investment Horizon", ["Short", "Medium", "Long"])
