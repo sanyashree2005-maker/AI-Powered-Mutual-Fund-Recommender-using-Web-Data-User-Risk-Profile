@@ -7,50 +7,52 @@ from langchain_openai import ChatOpenAI
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
-# =========================
-# LLM
-# =========================
+# ==============================
+# LLM (API key from secrets)
+# ==============================
 llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
 
-# =========================
+# ==============================
 # MARKET DATA (Near-Live)
-# =========================
+# ==============================
 @st.cache_data(ttl=1800)
 def fetch_market_data():
     return pd.DataFrame([
-        {"Fund":"Axis Bluechip Fund","Category":"Equity","Risk":"High","1Y":15,"3Y":18,"Expense":0.9},
-        {"Fund":"HDFC Balanced Advantage Fund","Category":"Hybrid","Risk":"Medium","1Y":11,"3Y":13,"Expense":0.8},
-        {"Fund":"ICICI Prudential Liquid Fund","Category":"Debt","Risk":"Low","1Y":6,"3Y":7,"Expense":0.4},
+        {"Fund": "Axis Bluechip Fund", "Category": "Equity", "Risk": "High", "1Y": 15, "3Y": 18, "Expense": 0.9},
+        {"Fund": "HDFC Balanced Advantage Fund", "Category": "Hybrid", "Risk": "Medium", "1Y": 11, "3Y": 13, "Expense": 0.8},
+        {"Fund": "ICICI Prudential Liquid Fund", "Category": "Debt", "Risk": "Low", "1Y": 6, "3Y": 7, "Expense": 0.4},
     ])
 
 df = fetch_market_data()
 timestamp = datetime.now().strftime("%d %b %Y, %I:%M %p")
 
-# =========================
+# ==============================
 # VECTOR STORE (RAG)
-# =========================
+# ==============================
 @st.cache_resource
-def build_vs(df):
+def build_vector_store(df):
     texts = df.apply(lambda r: str(r.to_dict()), axis=1).tolist()
-    emb = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return Chroma.from_texts(texts, emb)
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+    return Chroma.from_texts(texts, embeddings)
 
-vs = build_vs(df)
+vectorstore = build_vector_store(df)
 
-# =========================
-# STATE
-# =========================
+# ==============================
+# SHARED STATE
+# ==============================
 class AgentState(dict):
     pass
 
-# =========================
+# ==============================
 # AGENTS
-# =========================
+# ==============================
 def intent_agent(state):
     prompt = f"""
-    Classify intent into one of:
+    Classify intent into exactly one:
     recommendation, explanation, followup, market_overview, exit.
-    If unsure, use recommendation.
+    If unsure, choose recommendation.
 
     Query: {state['query']}
     """
@@ -69,16 +71,16 @@ def profile_agent(state):
     return state
 
 def retrieve_agent(state):
-    docs = vs.similarity_search(state["query"], k=3)
-    state["context"] = [d.page_content for d in docs]
+    docs = vectorstore.similarity_search(state["query"], k=3)
+    state["context"] = [d.page_content for d in docs] if docs else []
     return state
 
 def recommend_agent(state):
     prompt = f"""
-    Use ONLY this data:
+    Using ONLY this data:
     {state['context']}
 
-    Recommend funds for:
+    Recommend suitable mutual funds for:
     {state['profile']}
     """
     state["response"] = llm.invoke(prompt).content
@@ -87,7 +89,7 @@ def recommend_agent(state):
 
 def explain_agent(state):
     prompt = f"""
-    Explain clearly using risk, horizon and expense ratio.
+    Explain the recommendation using risk, horizon, and expense ratio.
 
     Recommendation:
     {state.get('last_recommendation')}
@@ -112,7 +114,7 @@ def followup_agent(state):
 
 def market_agent(state):
     prompt = f"""
-    Based on latest public market data:
+    Based on latest publicly available market data:
     {state['context']}
 
     Question:
@@ -122,16 +124,16 @@ def market_agent(state):
     return state
 
 def finalize_agent(state):
-    if "response" not in state or not state["response"]:
+    if not state.get("response"):
         state["response"] = (
-            "I could not generate a clear answer from available market data. "
-            "Please rephrase your question."
+            "I could not generate a clear answer from the available data. "
+            "Please try rephrasing your question."
         )
     return state
 
-# =========================
-# LANGGRAPH
-# =========================
+# ==============================
+# LANGGRAPH ORCHESTRATOR
+# ==============================
 graph = StateGraph(AgentState)
 
 graph.add_node("Intent", intent_agent)
@@ -169,9 +171,9 @@ graph.add_edge("Finalize", END)
 
 app = graph.compile()
 
-# =========================
+# ==============================
 # STREAMLIT UI
-# =========================
+# ==============================
 st.set_page_config("Agentic AI – Mutual Fund Intelligence", layout="wide")
 
 st.title("📈 Agentic AI – Mutual Fund Market Intelligence")
@@ -185,11 +187,19 @@ amount = st.sidebar.number_input("Investment Amount", min_value=1000)
 query = st.text_input("Ask anything about mutual funds")
 
 if st.button("Submit") and query:
-    result = app.invoke({
+    initial_state = {
         "query": query,
         "risk": risk,
         "horizon": horizon,
-        "amount": amount
-    })
+        "amount": amount,
+        "intent": None,
+        "profile": {},
+        "context": [],
+        "response": "",
+        "last_recommendation": "",
+        "last_explanation": ""
+    }
+
+    result = app.invoke(initial_state)
     st.subheader("Agent Response")
     st.write(result.get("response"))
