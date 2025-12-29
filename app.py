@@ -1,5 +1,5 @@
 # =========================================================
-# Agentic AI – Mutual Fund Recommender (FINAL VERSION)
+# Agentic AI – Mutual Fund Recommender (FINAL FIXED VERSION)
 # =========================================================
 
 import streamlit as st
@@ -17,18 +17,15 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
 # ------------------ PAGE CONFIG ------------------
-st.set_page_config(
-    page_title="Agentic AI – Mutual Fund Recommender",
-    layout="wide"
-)
+st.set_page_config(page_title="Agentic AI – Mutual Fund Recommender", layout="wide")
 st.title("🤖 Agentic AI – Mutual Fund Recommender")
 
-# ------------------ LLM (STREAMING DISABLED HERE ONLY) ------------------
+# ------------------ LLM (NO STREAMING) ------------------
 llm = ChatGroq(
     api_key=st.secrets["GROQ_API_KEY"],
     model="llama3-8b-8192",
     temperature=0.2,
-    streaming=False  # ✅ CRITICAL & CORRECT FIX
+    streaming=False
 )
 
 embeddings = HuggingFaceEmbeddings(
@@ -56,14 +53,11 @@ def intent_agent(state: AgentState):
         return state
 
     prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            "Return ONLY one word: recommendation, comparison, explanation, market, exit"
-        ),
+        ("system", "Return ONLY one word: recommendation, comparison, explanation, market, exit"),
         ("human", last_msg)
     ])
 
-    result = llm.invoke(prompt)
+    result = llm.invoke(prompt.format_messages())
     state["intent"] = result.content.strip().lower()
     return state
 
@@ -89,10 +83,8 @@ def scrape_funds():
         if len(cols) >= 5:
             docs.append(
                 Document(
-                    page_content=(
-                        f"Fund {cols[0]}, Category {cols[1]}, "
-                        f"1Y Return {cols[2]}, 3Y Return {cols[3]}, Risk {cols[4]}"
-                    )
+                    page_content=f"Fund {cols[0]}, Category {cols[1]}, "
+                                 f"1Y {cols[2]}, 3Y {cols[3]}, Risk {cols[4]}"
                 )
             )
     return docs
@@ -107,8 +99,7 @@ def retrieval_agent(state: AgentState):
 
         vectordb = Chroma.from_documents(docs, embeddings)
         retriever = vectordb.as_retriever(search_kwargs={"k": 5})
-        query = state["messages"][-1].content
-        state["documents"] = retriever.invoke(query)
+        state["documents"] = retriever.invoke(state["messages"][-1].content)
     except Exception:
         state["documents"] = []
     return state
@@ -116,9 +107,7 @@ def retrieval_agent(state: AgentState):
 
 def recommendation_agent(state: AgentState):
     if not state.get("documents"):
-        state["response"] = (
-            "Relevant mutual fund data is not available from current public sources."
-        )
+        state["response"] = "No sufficient mutual fund data available from public sources."
         return state
 
     context = "\n".join(d.page_content for d in state["documents"])
@@ -128,7 +117,7 @@ def recommendation_agent(state: AgentState):
         ("human", f"User Profile: {state['user_profile']}\n\nData:\n{context}")
     ])
 
-    result = llm.invoke(prompt)
+    result = llm.invoke(prompt.format_messages())
     state["response"] = result.content
     return state
 
@@ -138,7 +127,8 @@ def explanation_agent(state: AgentState):
         ("system", "Explain the recommendation clearly and safely."),
         ("human", state["response"])
     ])
-    result = llm.invoke(prompt)
+
+    result = llm.invoke(prompt.format_messages())
     state["response"] = result.content
     return state
 
@@ -149,15 +139,17 @@ def comparison_agent(state: AgentState):
         return state
 
     context = "\n".join(d.page_content for d in state["documents"])
+
     prompt = ChatPromptTemplate.from_messages([
         ("system", "Compare mutual funds using only the given data."),
         ("human", context)
     ])
-    result = llm.invoke(prompt)
+
+    result = llm.invoke(prompt.format_messages())
     state["response"] = result.content
     return state
 
-# ------------------ LANGGRAPH ORCHESTRATION ------------------
+# ------------------ LANGGRAPH ------------------
 graph = StateGraph(AgentState)
 
 graph.add_node("intent", intent_agent)
@@ -180,17 +172,12 @@ graph.add_edge("recommend", "explain")
 graph.add_edge("explain", END)
 graph.add_edge("compare", END)
 
-# ✅ CORRECT: no unsupported arguments
 app_graph = graph.compile()
 
 # ------------------ STREAMLIT UI ------------------
 with st.sidebar:
-    st.session_state["risk"] = st.selectbox(
-        "Risk Profile", ["Low", "Medium", "High"]
-    )
-    st.session_state["horizon"] = st.selectbox(
-        "Investment Horizon", ["Short", "Medium", "Long"]
-    )
+    st.session_state["risk"] = st.selectbox("Risk Profile", ["Low", "Medium", "High"])
+    st.session_state["horizon"] = st.selectbox("Investment Horizon", ["Short", "Medium", "Long"])
     st.session_state["preferences"] = st.multiselect(
         "Preferences", ["Growth", "Stability", "Tax Saving"]
     )
@@ -217,7 +204,6 @@ if user_input and user_input.strip():
     ])
 
 for msg in st.session_state.chat:
-    if isinstance(msg, HumanMessage):
-        st.chat_message("user").write(msg.content)
-    else:
+    st.chat_message("user").write(msg.content)
+    if isinstance(msg, AIMessage):
         st.chat_message("assistant").write(msg.content)
